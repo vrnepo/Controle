@@ -204,14 +204,19 @@ def sincronizar() -> Dict[str, int]:
     lanc = repositorio.listar_lancamentos(limite=5000)
     lanc = list(reversed(lanc))          # ascendente por data, como o original
     nota = ("Aba escrita pelo sistema — NÃO editar (a sincronização reescreve). "
-            "Uma linha por transação.")
+            "Uma linha por transação. J2 soma a coluna Valor respeitando o filtro.")
     if len(lanc) + 3 > TETO_FORMULAS_ANTIGAS - 50:
         nota += (" ⚠ ATENÇÃO: %d linhas, chegando perto do teto %d das fórmulas "
                  "do Painel Mensal/Faturas — é preciso ampliar os intervalos delas."
                  % (len(lanc) + 3, TETO_FORMULAS_ANTIGAS))
+    # J2 = SUBTOTAL(9; Valor): soma só o que o filtro deixa visível — pedido do
+    # usuário em 08/08/2026. A fórmula vai na sintaxe canônica da API (vírgula);
+    # o Sheets a exibe na notação da localidade (ponto e vírgula no pt-BR).
+    # Escrever ";" direto falharia se a localidade da planilha mudasse.
+    linha_nota: List[Any] = [nota] + [""] * 8 + ["=SUBTOTAL(9,J4:J%d)" % TETO_FORMULAS_ANTIGAS]
     matriz: List[List[Any]] = [
         ["LANÇAMENTOS"],
-        [nota],
+        linha_nota,
         ["Banco", "Fonte", "Data", "Descrição", "Categoria", "Subcategoria",
          "Item fixo", "Conta", "Tipo", "Valor", "Competência", "Status", "Arquivo"]]
     for r in lanc:
@@ -223,12 +228,19 @@ def sincronizar() -> Dict[str, int]:
     aba_lanc = _aba(planilha, ABAS["lancamentos"], 13)
     _escrever(aba_lanc, matriz)
     _formatar(aba_lanc, {"C4:C": FORMATO_DATA, "K4:K": FORMATO_MES,
-                         "J4:J": FORMATO_MOEDA})
+                         "J4:J": FORMATO_MOEDA, "J2": FORMATO_MOEDA})
     # Nota em cada título de coluna (aparece ao passar o mouse): o cabeçalho
     # diz O QUE é; a nota diz o que significa e de onde vem. Pedido do usuário
     # em 08/08/2026. Falha aqui não pode abortar a sincronização.
     try:
         aba_lanc.insert_notes(NOTAS_COLUNAS_LANCAMENTOS)
+    except Exception:
+        pass
+    # Filtro nos títulos da linha 3 (pedido do usuário): o _escrever removeu o
+    # filtro herdado; este é recriado limpo a cada sincronização, cobrindo só
+    # os dados reais — e é o que o SUBTOTAL de J2 respeita.
+    try:
+        aba_lanc.set_basic_filter("A3:M%d" % (len(lanc) + 3))
     except Exception:
         pass
     contagem["lancamentos"] = len(lanc)
@@ -266,24 +278,23 @@ def sincronizar() -> Dict[str, int]:
     _formatar(aba_conc, {"A2:A": FORMATO_MES, "C2:J": FORMATO_MOEDA})
     contagem["conciliacao"] = len(linhas_conc)
 
-    # --- Dashboard (evolução mensal)
-    evolucao = repositorio.evolucao_mensal()
-    gastos = repositorio.gasto_por_conta()
-    por_mes: Dict[Any, Dict[str, float]] = {}
-    for g in gastos:
-        por_mes.setdefault(g["competencia"], {})[g["conta"]] = float(g["total"] or 0)
-    nomes_contas = [c["nome"] for c in repositorio.contas()]
-    matriz = [["Competência", "Receitas", "Despesas", "Resultado"] + nomes_contas]
-    for e in evolucao:
-        receitas, despesas = float(e["receitas"] or 0), float(e["despesas"] or 0)
-        linha = [_mes(e["competencia"]), receitas, despesas, receitas + despesas]
-        for nome in nomes_contas:
-            linha.append(por_mes.get(e["competencia"], {}).get(nome, 0.0))
-        matriz.append(linha)
-    aba_dash = _aba(planilha, ABAS["dashboard"], 4 + len(nomes_contas))
-    _escrever(aba_dash, matriz)
-    _formatar(aba_dash, {"A2:A": FORMATO_MES, "B2:H": FORMATO_MOEDA})
-    contagem["dashboard"] = len(evolucao)
+    # --- Dashboard: NÃO existe mais no espelho (decisão do usuário, 08/08/2026).
+    # O painel mensal é o Painel Mensal da própria planilha; a tela Painel do
+    # sistema cobre o resto. A aba é removida ativamente porque só parar de
+    # escrevê-la deixaria uma aba órfã com dados velhos — pior que não ter.
+    try:
+        planilha.del_worksheet(planilha.worksheet(ABAS["dashboard"]))
+        contagem["dashboard removida"] = 1
+    except Exception:
+        pass  # já não existe — o estado desejado
+
+    # Painel Mensal como primeira aba (decisão do usuário, 08/08/2026): é a
+    # visão que ele abre primeiro. Se a aba for renomeada um dia, o reorder
+    # simplesmente não acontece — nunca é motivo para abortar a sincronização.
+    try:
+        planilha.worksheet("Painel Mensal").update_index(0)
+    except Exception:
+        pass
 
     # --- Importações
     imp = repositorio.importacoes(limite=200)
