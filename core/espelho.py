@@ -292,7 +292,9 @@ def sincronizar() -> Dict[str, int]:
     # visão que ele abre primeiro. Se a aba for renomeada um dia, o reorder
     # simplesmente não acontece — nunca é motivo para abortar a sincronização.
     try:
-        planilha.worksheet("Painel Mensal").update_index(0)
+        painel = planilha.worksheet("Painel Mensal")
+        painel.update_index(0)
+        _validacoes_painel_mensal(planilha, painel)
     except Exception:
         pass
 
@@ -311,6 +313,38 @@ def sincronizar() -> Dict[str, int]:
     contagem["importacoes"] = len(imp)
 
     return contagem
+
+
+def _validacoes_painel_mensal(planilha, painel) -> None:
+    """
+    Menus suspensos do Painel Mensal (pedido do usuário, 08/08/2026):
+    B4 = mês (Janeiro..Dezembro) e D4 = ano (2025..2030).
+
+    A grafia dos meses tem de ser EXATAMENTE a da aba Categorias (R5:R16,
+    capitalizada), porque a competência calculada em E4 usa
+    CORRESP($B$4; Categorias!$R$5:$R$16; 0) — um "janeiro" minúsculo casaria
+    (CORRESP ignora caixa), mas manter a mesma grafia evita depender disso.
+
+    Reaplicar a cada sincronização é de propósito: se a validação for
+    removida por acidente, a próxima rodada a devolve.
+    """
+    meses = [m.capitalize() for m in config.MESES_PT]
+    anos = [str(a) for a in range(2025, 2031)]
+
+    def regra(valores):
+        return {"condition": {"type": "ONE_OF_LIST",
+                              "values": [{"userEnteredValue": v} for v in valores]},
+                "showCustomUi": True, "strict": True}
+
+    def intervalo(linha, coluna):        # 0-based, célula única
+        return {"sheetId": painel.id,
+                "startRowIndex": linha, "endRowIndex": linha + 1,
+                "startColumnIndex": coluna, "endColumnIndex": coluna + 1}
+
+    planilha.batch_update({"requests": [
+        {"setDataValidation": {"range": intervalo(3, 1), "rule": regra(meses)}},   # B4
+        {"setDataValidation": {"range": intervalo(3, 3), "rule": regra(anos)}},    # D4
+    ]})
 
 
 # Notas dos títulos da aba Lançamentos (cabeçalho na linha 3).
