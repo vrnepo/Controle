@@ -125,6 +125,15 @@ def _escrever(aba, matriz: List[List[Any]]) -> None:
         aba.clear_basic_filter()
     except Exception:
         pass
+    # Mesclas herdadas engolem o cabeçalho: a linha 1 da planilha original era
+    # um título mesclado de A a M, o clear() preserva a mescla, e o que se via
+    # era só "Banco" na linha inteira (08/08/2026). Desfaz todas antes de
+    # escrever — o espelho escreve célula a célula e não usa mescla nenhuma.
+    try:
+        aba.spreadsheet.batch_update({
+            "requests": [{"unmergeCells": {"range": {"sheetId": aba.id}}}]})
+    except Exception:
+        pass
     aba.clear()
     if not matriz:
         return
@@ -215,6 +224,13 @@ def sincronizar() -> Dict[str, int]:
     _escrever(aba_lanc, matriz)
     _formatar(aba_lanc, {"C4:C": FORMATO_DATA, "K4:K": FORMATO_MES,
                          "J4:J": FORMATO_MOEDA})
+    # Nota em cada título de coluna (aparece ao passar o mouse): o cabeçalho
+    # diz O QUE é; a nota diz o que significa e de onde vem. Pedido do usuário
+    # em 08/08/2026. Falha aqui não pode abortar a sincronização.
+    try:
+        aba_lanc.insert_notes(NOTAS_COLUNAS_LANCAMENTOS)
+    except Exception:
+        pass
     contagem["lancamentos"] = len(lanc)
 
     # --- Resumo de Faturas
@@ -285,6 +301,26 @@ def sincronizar() -> Dict[str, int]:
 
     return contagem
 
+
+# Notas dos títulos da aba Lançamentos (cabeçalho na linha 3).
+NOTAS_COLUNAS_LANCAMENTOS = {
+    "A3": "Banco do lançamento: Nubank ou Santander.",
+    "B3": "De onde veio: Fatura (cartão de crédito) ou Extrato (conta corrente).",
+    "C3": "Data da transação. No cartão, é o dia da compra — não o da fatura.",
+    "D3": "Descrição como veio do banco (estabelecimento, PIX, tarifa...).",
+    "E3": "Categoria dada pelas Regras do sistema (editável na tela Lançamentos).",
+    "F3": "Detalhe da categoria (ex.: Streaming, Urbano, Encargos/Tarifas).",
+    "G3": "Rótulo dos gastos recorrentes (aluguel, luz, academia...). "
+          "É o que alimenta o Painel Mensal.",
+    "H3": "Conta: Cartão Nubank, Cartão Santander, Conta Nubank ou Conta Santander.",
+    "I3": "Receita, Despesa ou Transferência. Transferência = movimento entre "
+          "contas próprias e pagamento de fatura — não soma no resultado do mês.",
+    "J3": "Valor em R$. Negativo = saída; positivo = entrada ou estorno.",
+    "K3": "Mês em que o valor pesa no caixa: mês da fatura (cartões) "
+          "ou mês da data (extratos).",
+    "L3": "Situação do lançamento (Confirmado / Previsto).",
+    "M3": "Arquivo importado que originou a linha.",
+}
 
 SITUACAO_ROTULO = {
     "ok": "✔ confere",
