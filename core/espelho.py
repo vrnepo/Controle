@@ -111,12 +111,18 @@ def _aba(planilha, nome: str, colunas: int):
         return planilha.add_worksheet(title=nome, rows=100, cols=max(colunas, 10))
 
 
-def _escrever(aba, matriz: List[List[Any]]) -> None:
+def _escrever(aba, matriz: List[List[Any]],
+              intervalos_limpeza: Optional[List[str]] = None) -> None:
     """Limpa e reescreve a aba inteira.
 
     Reescrever tudo, em vez de tentar casar linha por linha, é de propósito: o
     espelho é derivado: qualquer estado dele que não venha do banco é lixo. E
     uma escrita só gasta uma chamada da cota da API, contra uma por linha.
+
+    `intervalos_limpeza`: quando presente, limpa SÓ esses intervalos em vez da
+    aba inteira — é como a célula J2 dos Lançamentos fica de fora (ela é do
+    usuário; ver o comentário na montagem da matriz). Na matriz, célula None
+    é PULADA pela API (não sobrescreve), diferente de "" que apaga.
     """
     # Filtro ativo herdado de antes da sincronização esconde as linhas novas —
     # na aba Lançamentos ficou um filtro da planilha original mostrando 55 de
@@ -134,7 +140,10 @@ def _escrever(aba, matriz: List[List[Any]]) -> None:
             "requests": [{"unmergeCells": {"range": {"sheetId": aba.id}}}]})
     except Exception:
         pass
-    aba.clear()
+    if intervalos_limpeza:
+        aba.batch_clear(intervalos_limpeza)
+    else:
+        aba.clear()
     if not matriz:
         return
     aba.update(values=matriz, range_name="A1", value_input_option="USER_ENTERED")
@@ -204,16 +213,18 @@ def sincronizar() -> Dict[str, int]:
     lanc = repositorio.listar_lancamentos(limite=5000)
     lanc = list(reversed(lanc))          # ascendente por data, como o original
     nota = ("Aba escrita pelo sistema — NÃO editar (a sincronização reescreve). "
-            "Uma linha por transação. J2 soma a coluna Valor respeitando o filtro.")
+            "Exceção: a célula J2 é SUA — o sistema nunca a toca.")
     if len(lanc) + 3 > TETO_FORMULAS_ANTIGAS - 50:
         nota += (" ⚠ ATENÇÃO: %d linhas, chegando perto do teto %d das fórmulas "
                  "do Painel Mensal/Faturas — é preciso ampliar os intervalos delas."
                  % (len(lanc) + 3, TETO_FORMULAS_ANTIGAS))
-    # J2 = SUBTOTAL(9; Valor): soma só o que o filtro deixa visível — pedido do
-    # usuário em 08/08/2026. A fórmula vai na sintaxe canônica da API (vírgula);
-    # o Sheets a exibe na notação da localidade (ponto e vírgula no pt-BR).
-    # Escrever ";" direto falharia se a localidade da planilha mudasse.
-    linha_nota: List[Any] = [nota] + [""] * 8 + ["=SUBTOTAL(9,J4:J%d)" % TETO_FORMULAS_ANTIGAS]
+    # J2 é DO USUÁRIO (decisão dele, 08/08/2026): ele mantém ali o
+    # =SUBTOTAL(9;J4:J2177) que soma o que o filtro mostra. A primeira versão
+    # era escrita pelo sistema em sintaxe de vírgula e quebrou: USER_ENTERED
+    # interpreta na LOCALIDADE da planilha, e o pt-BR exige ponto e vírgula.
+    # Agora a sincronização nem limpa nem escreve J2: os intervalos de limpeza
+    # excluem a célula, e None na matriz faz a API pular a posição.
+    linha_nota: List[Any] = [nota] + [None] * 12
     matriz: List[List[Any]] = [
         ["LANÇAMENTOS"],
         linha_nota,
@@ -226,7 +237,10 @@ def sincronizar() -> Dict[str, int]:
             r["conta"], r["tipo"], _numero(r["valor"]), _mes(r["competencia"]),
             r["status"], _texto_seguro(r["arquivo"])])
     aba_lanc = _aba(planilha, ABAS["lancamentos"], 13)
-    _escrever(aba_lanc, matriz)
+    # Limpa tudo MENOS J2: linhas 1-2 nas colunas A-I e K-M, o J1 sozinho, e
+    # da linha 3 para baixo tudo — a única célula fora das faixas é a J2.
+    _escrever(aba_lanc, matriz,
+              intervalos_limpeza=["A1:I2", "J1", "K1:M2", "A3:M100000"])
     _formatar(aba_lanc, {"C4:C": FORMATO_DATA, "K4:K": FORMATO_MES,
                          "J4:J": FORMATO_MOEDA, "J2": FORMATO_MOEDA})
     # Nota em cada título de coluna (aparece ao passar o mouse): o cabeçalho
