@@ -124,14 +124,34 @@ def _escrever(aba, matriz: List[List[Any]]) -> None:
     aba.update(values=matriz, range_name="A1", value_input_option="USER_ENTERED")
 
 
+FORMATO_DATA = {"numberFormat": {"type": "DATE", "pattern": "dd/mm/yyyy"}}
+FORMATO_MES = {"numberFormat": {"type": "DATE", "pattern": "mmm/yy"}}
+FORMATO_MOEDA = {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00;[Red](#,##0.00)"}}
+
+
+def _formatar(aba, formatos: Dict[str, Dict[str, Any]]) -> None:
+    """Aplica formato numérico por intervalo. Falha de formato não pode abortar
+    a sincronização — o dado já está lá; formato é cosmético."""
+    for intervalo, formato in formatos.items():
+        try:
+            aba.format(intervalo, formato)
+        except Exception:
+            pass
+
+
 def _dia(valor: Optional[dt.date]) -> str:
-    return valor.strftime("%d/%m/%Y") if valor else ""
+    # ISO: o Sheets reconhece como DATA em qualquer localidade. "07/08/2026"
+    # dependeria da localidade da planilha (em en-US viraria 8 de julho) e
+    # "ago./26" viraria TEXTO — foi exatamente isso que deixou o Painel Mensal
+    # em branco em 08/08/2026: as fórmulas comparam com DATE(), e data ≠ texto.
+    # A exibição (dd/mm/aaaa, mmm/aa) vem do formato numérico aplicado depois.
+    return valor.strftime("%Y-%m-%d") if valor else ""
 
 
 def _mes(valor: Optional[dt.date]) -> str:
     if not valor:
         return ""
-    return config.mes_curto(valor.month) + valor.strftime("%y")
+    return valor.strftime("%Y-%m-01")
 
 
 def _numero(valor: Any) -> Any:
@@ -156,17 +176,38 @@ def sincronizar() -> Dict[str, int]:
     contagem: Dict[str, int] = {}
 
     # --- Lançamentos
+    #
+    # LAYOUT ORIGINAL DA PLANILHA, de propósito: título na linha 1, nota na 2,
+    # cabeçalho na 3 e dados a partir da linha 4 — porque as abas antigas que o
+    # usuário preservou (Painel Mensal, Faturas) têm fórmulas apontando para
+    # 'Lançamentos'!$X$4:$X$2177. Quando o espelho escrevia o cabeçalho na
+    # linha 1, essas fórmulas liam as linhas erradas e o Painel Mensal ficava
+    # em branco (visto em 08/08/2026). Escrever no mesmo lugar as ressuscita
+    # sem tocar em fórmula nenhuma.
+    TETO_FORMULAS_ANTIGAS = 2177
     lanc = repositorio.listar_lancamentos(limite=5000)
-    matriz: List[List[Any]] = [[
-        "Banco", "Fonte", "Data", "Descrição", "Categoria", "Subcategoria",
-        "Item fixo", "Conta", "Tipo", "Valor", "Competência", "Status", "Arquivo"]]
+    lanc = list(reversed(lanc))          # ascendente por data, como o original
+    nota = ("Aba escrita pelo sistema — NÃO editar (a sincronização reescreve). "
+            "Uma linha por transação.")
+    if len(lanc) + 3 > TETO_FORMULAS_ANTIGAS - 50:
+        nota += (" ⚠ ATENÇÃO: %d linhas, chegando perto do teto %d das fórmulas "
+                 "do Painel Mensal/Faturas — é preciso ampliar os intervalos delas."
+                 % (len(lanc) + 3, TETO_FORMULAS_ANTIGAS))
+    matriz: List[List[Any]] = [
+        ["LANÇAMENTOS"],
+        [nota],
+        ["Banco", "Fonte", "Data", "Descrição", "Categoria", "Subcategoria",
+         "Item fixo", "Conta", "Tipo", "Valor", "Competência", "Status", "Arquivo"]]
     for r in lanc:
         matriz.append([
             r["banco"], r["fonte"], _dia(r["data"]), _texto_seguro(r["descricao"]),
             r["categoria"] or "", r["subcategoria"] or "", r["item_fixo"] or "",
             r["conta"], r["tipo"], _numero(r["valor"]), _mes(r["competencia"]),
             r["status"], _texto_seguro(r["arquivo"])])
-    _escrever(_aba(planilha, ABAS["lancamentos"], 13), matriz)
+    aba_lanc = _aba(planilha, ABAS["lancamentos"], 13)
+    _escrever(aba_lanc, matriz)
+    _formatar(aba_lanc, {"C4:C": FORMATO_DATA, "K4:K": FORMATO_MES,
+                         "J4:J": FORMATO_MOEDA})
     contagem["lancamentos"] = len(lanc)
 
     # --- Resumo de Faturas
@@ -179,7 +220,9 @@ def sincronizar() -> Dict[str, int]:
             _numero(r["despesas"]), _numero(r["encargos"]), _numero(r["creditos"]),
             _numero(r["pagamentos"]), _numero(r["total_informado"]),
             _texto_seguro(r["arquivo"])])
-    _escrever(_aba(planilha, ABAS["resumo"], 9), matriz)
+    aba_res = _aba(planilha, ABAS["resumo"], 9)
+    _escrever(aba_res, matriz)
+    _formatar(aba_res, {"A2:A": FORMATO_MES, "C2:H": FORMATO_MOEDA})
     contagem["resumo"] = len(resumos)
 
     # --- Conciliação
@@ -195,7 +238,9 @@ def sincronizar() -> Dict[str, int]:
             _numero(r["total_calculado"]), _numero(r["total_informado"]),
             _numero(r["delta_app"]), SITUACAO_ROTULO.get(r["situacao"], r["situacao"]),
             r["explicacao"]])
-    _escrever(_aba(planilha, ABAS["conciliacao"], 12), matriz)
+    aba_conc = _aba(planilha, ABAS["conciliacao"], 12)
+    _escrever(aba_conc, matriz)
+    _formatar(aba_conc, {"A2:A": FORMATO_MES, "C2:J": FORMATO_MOEDA})
     contagem["conciliacao"] = len(linhas_conc)
 
     # --- Dashboard (evolução mensal)
@@ -212,7 +257,9 @@ def sincronizar() -> Dict[str, int]:
         for nome in nomes_contas:
             linha.append(por_mes.get(e["competencia"], {}).get(nome, 0.0))
         matriz.append(linha)
-    _escrever(_aba(planilha, ABAS["dashboard"], 4 + len(nomes_contas)), matriz)
+    aba_dash = _aba(planilha, ABAS["dashboard"], 4 + len(nomes_contas))
+    _escrever(aba_dash, matriz)
+    _formatar(aba_dash, {"A2:A": FORMATO_MES, "B2:H": FORMATO_MOEDA})
     contagem["dashboard"] = len(evolucao)
 
     # --- Importações
