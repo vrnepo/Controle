@@ -122,8 +122,13 @@ def json_ok(dados: Any) -> JSONResponse:
 @app.get("/health")
 def health() -> Dict[str, Any]:
     """Endpoint do UptimeRobot e do health check do Render. Não exige login e
-    NÃO revela nada de dado — só se o processo está de pé."""
-    return {"ok": True, "app": config.APP_NOME, "versao": config.APP_VERSAO}
+    NÃO revela nada de dado — só se o processo está de pé.
+
+    O commit entra para tirar a dúvida "o deploy já assumiu?" — em 08/08/2026
+    uma sincronização do espelho rodou no código antigo porque o clique veio
+    antes de o Render trocar de versão, e não havia como perceber."""
+    return {"ok": True, "app": config.APP_NOME, "versao": config.APP_VERSAO,
+            "commit": os.environ.get("RENDER_GIT_COMMIT", "local")[:7]}
 
 
 @app.get("/")

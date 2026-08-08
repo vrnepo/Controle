@@ -118,6 +118,13 @@ def _escrever(aba, matriz: List[List[Any]]) -> None:
     espelho é derivado: qualquer estado dele que não venha do banco é lixo. E
     uma escrita só gasta uma chamada da cota da API, contra uma por linha.
     """
+    # Filtro ativo herdado de antes da sincronização esconde as linhas novas —
+    # na aba Lançamentos ficou um filtro da planilha original mostrando 55 de
+    # 1.876 linhas (08/08/2026). O clear() não o remove; isto sim.
+    try:
+        aba.clear_basic_filter()
+    except Exception:
+        pass
     aba.clear()
     if not matriz:
         return
