@@ -40,6 +40,9 @@ REGRAS_PADRAO: List[Tuple[str, str, str, str, str]] = [
      "Tarifas & Impostos", "Encargos/Tarifas", "Encargos de fatura", ""),
     (r"TARIFA MENSALIDADE|ANUIDADE|MENSALIDADE PACOTE|TARIFA",
      "Tarifas & Impostos", "Encargos/Tarifas", "Tarifa bancária/anuidade", ""),
+    # A assinatura Nubank+ é a anuidade do cartão (decisão do usuário,
+    # 08/08/2026, ao corrigir a fatura de jul/26 onde ela tinha ficado de fora).
+    (r"NUBANK\+", "Tarifas & Impostos", "Encargos/Tarifas", "Tarifa bancária/anuidade", ""),
 
     # --- moradia
     (r"ALMEIDA FERNANDES ADVOGAD", "Moradia – APTO", "Aluguel", "Aluguel apartamento", ""),

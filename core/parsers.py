@@ -140,8 +140,12 @@ def conta_do_nome(nome: str) -> Optional[str]:
 # Entrar com elas dobraria o gasto do mês. Encargo real (juros, IOF, multa,
 # estorno) NÃO está aqui — aquilo é gasto de verdade.
 _CONTABEIS = [
+    # "PAGAMENTO EM 19 JAN" e "SALDO EM ROTATIVO" são as variantes que o PDF
+    # usa e que escaparam do filtro na reimportação de 08/08/2026 — cinco
+    # pagamentos e três saldos entraram como lançamento até a auditoria pegar.
     r"^PAGAMENTO RECEBIDO", r"^PAGAMENTO DE FATURA", r"^PAGAMENTO EFETUADO",
-    r"^SALDO (EM ATRASO|RESTANTE|DO ROTATIVO|ANTERIOR|FINANCIADO)",
+    r"^PAGAMENTO EM \d",
+    r"^SALDO (EM ATRASO|EM ROTATIVO|RESTANTE|DO ROTATIVO|ANTERIOR|FINANCIADO)",
     r"^CREDITO DE (ATRASO|ROTATIVO)", r"^ENCERRAMENTO DE DIVIDA",
     r"^JUROS DE DIVIDA ENCERRADA", r"^TOTAL ",
 ]
@@ -556,6 +560,17 @@ def _pdf_nubank_fatura(nome: str, texto: str) -> Leitura:
         if v is None:
             continue
         desc = m.group(3).strip()
+        # O PDF prefixa cada compra com o final do cartão ("•••• 8751 Loja X");
+        # o CSV exportado pelo app e todo o histórico gravam só "Loja X".
+        # Manter o prefixo mudaria a chave de deduplicação e a MESMA fatura,
+        # importada uma vez por CSV e outra por PDF, entraria duas vezes —
+        # visto na prática em 08/08/2026, no diff de jul/2026 (53 linhas iguais
+        # que só diferiam pelo prefixo).
+        desc = re.sub(r"^[•·*]+\s*\d{4}\s+", "", desc)
+        # O PDF escreve 'IOF de "Openai"' com aspas; o CSV e o histórico, sem.
+        # Com aspas a chave de dedup muda e a mesma linha entra duas vezes —
+        # foram 8 duplicatas na reimportação de 08/08/2026 até tirar isto.
+        desc = desc.replace('"', "").replace("“", "").replace("”", "").strip()
         if linha_contabil(desc):
             continue
         ano = comp.year - 1 if mes > comp.month else comp.year

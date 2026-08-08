@@ -171,6 +171,49 @@ def test_ofx():
     assert r.linhas[0]["conta"] == "Conta Santander"
 
 
+# ------------------------------------- regressão: fatura Nubank em PDF
+
+def test_pdf_nubank_nao_perde_estorno_nem_assinatura():
+    """
+    Regressão do erro achado pelo usuário em 08/08/2026, na fatura de jul/26:
+    o pipeline ANTIGO só aceitava linhas começando com '••••' e perdeu o
+    estorno de R$ 78,50 e a assinatura Nubank+ de R$ 29,00 — nenhum aviso.
+    Estas são as linhas reais, na forma em que saem do texto do PDF.
+    """
+    texto = "\n".join([
+        "10 JUN •••• 8751 Mp *Aliexpress - Parcela 1/10 R$ 385,94",
+        '10 JUN Estorno de "Amazonmktplc*Stbcomerc" −R$ 78,50',
+        "17 JUN Nubank+ R$ 29,00",
+        "16 JUL Pagamento recebido −R$ 2.692,24",
+        "19 JAN Pagamento em 19 JAN −R$ 2.376,78",     # variante que escapava
+        "18 FEV Saldo em rotativo R$ 2.262,33",        # idem
+        '27 JUN IOF de "Openai *Chatgpt Subscr" R$ 3,76',
+    ])
+    linhas = parsers._pdf_nubank_fatura("Nubank_2026-07-17.pdf", texto).linhas
+
+    por_desc = {l["descricao"]: l for l in linhas}
+    # estorno entra, positivo (dinheiro que voltou); aspas removidas — o
+    # histórico e o CSV não as têm, e com elas a dedup veria outra linha
+    assert por_desc["Estorno de Amazonmktplc*Stbcomerc"]["valor"] == 78.50
+    # assinatura entra, como despesa
+    assert por_desc["Nubank+"]["valor"] == -29.00
+    # IOF entra, sem aspas
+    assert por_desc["IOF de Openai *Chatgpt Subscr"]["valor"] == -3.76
+    # linhas de fechamento ficam fora, em TODAS as variantes
+    assert not any("Pagamento" in d or "Saldo" in d for d in por_desc)
+    # total: −385,94 + 78,50 − 29,00 − 3,76
+    assert abs(sum(l["valor"] for l in linhas) + 340.20) < 0.005
+
+
+def test_pdf_nubank_remove_prefixo_do_cartao():
+    """O PDF escreve '•••• 8751 Loja'; o CSV e o histórico gravam 'Loja'.
+    Manter o prefixo mudaria a chave de dedup e a mesma fatura importada por
+    PDF e por CSV entraria duas vezes."""
+    texto = "10 JUN •••• 8751 Mercadolivre*Mercadol - Parcela 4/10 R$ 106,96"
+    linhas = parsers._pdf_nubank_fatura("Nubank_2026-07-17.pdf", texto).linhas
+    assert linhas[0]["descricao"] == "Mercadolivre*Mercadol - Parcela 4/10"
+
+
 # -------------------------------------------- fatura Santander de verdade
 
 @pytest.mark.skipif(not SENHA, reason="SENHA_PDF_SANTANDER não configurada")
