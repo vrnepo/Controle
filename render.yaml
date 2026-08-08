@@ -1,0 +1,32 @@
+# Blueprint do Render (https://render.com) — plano FREE.
+# No painel: New → Blueprint → aponte para este repositório.
+# `sync: false` = "pedir o valor no painel", nunca versionar aqui.
+#
+# UM serviço só, diferente do SICAD (que tem o par Produção/Admin). Aqui não
+# há o que separar: é um sistema de uso pessoal, com um usuário. E o plano
+# free dá 750 h/mês no total — dois serviços acordados não cabem, lição já
+# registrada no SICAD.
+services:
+  - type: web
+    name: financas
+    runtime: python
+    plan: free
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL              # Postgres do Neon — a fonte da verdade
+        sync: false
+      - key: SECRET_KEY                # assina o cookie de sessão
+        generateValue: true
+      - key: COOKIE_SEGURO
+        value: "1"
+      - key: SENHA_PDF_SANTANDER       # senha das faturas em PDF (o CPF do titular)
+        sync: false
+      # ---- espelho para a planilha do Google: OPCIONAL.
+      # Sem estas duas o sistema roda inteiro, só não espelha.
+      - key: GCP_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: PLANILHA_ESPELHO_ID       # id da Controle_Financeiro_2_0 - Final
+        sync: false

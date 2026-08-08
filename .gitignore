@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.DS_Store
+.pytest_cache/
+# Nunca versionar credenciais reais
+*service_account*.json
+secrets*.toml
+# Arquivos financeiros: extratos e faturas NÃO entram no repositório.
+# O repo pode virar público como o do SICAD; fatura de cartão, não.
+arquivos/
+*.ofx
+*.qfx
+Nubank_*.csv
+Nubank_*.pdf
+NU_*.pdf
+*Santander*.pdf
+*Santander*.PDF

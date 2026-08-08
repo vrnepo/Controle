@@ -1,0 +1,10 @@
+# Só para desenvolvimento e maquete. NÃO entra no requirements.txt: o pgserver
+# carrega os binários do PostgreSQL dentro do pacote (~30 MB) e o Render não tem
+# o que fazer com eles — lá o banco é o Neon.
+-r requirements.txt
+
+pytest>=8.0
+
+# Postgres embutido, usado por scripts/maquete.py. Traz o binário no venv, sem
+# instalar nada no sistema (a máquina não tem brew postgres nem Docker).
+pgserver>=0.1.4

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entrar — Controle Financeiro</title>
+  <link rel="stylesheet" href="/static/tema.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/tema.js"></script>
+</head>
+<body>
+  <main class="tela-login">
+    <div class="caixa-login">
+      <div class="marca">
+        <div class="marca-icone">CF</div>
+        <div class="marca-texto">Controle Financeiro<span>versão 3.0</span></div>
+      </div>
+
+      <!-- entrada normal -->
+      <section id="bloco-entrar">
+        <h1>Entrar</h1>
+        <p class="sub">Seus lançamentos, faturas e conciliação.</p>
+        <form id="form-entrar" class="campos" autocomplete="on">
+          <div>
+            <label class="rotulo" for="email">Login ou e-mail</label>
+            <!-- type="text", não "email": o identificador é o que está na tabela
+                 `usuarios`, e nem sempre é um endereço — o usuário da maquete é
+                 só "admin". Com type="email" o navegador barrava o envio antes
+                 de a requisição sair. inputmode ainda oferece o teclado de
+                 e-mail no celular. -->
+            <input class="campo" type="text" id="email" name="email"
+                   inputmode="email" autocapitalize="none" spellcheck="false"
+                   autocomplete="username" required>
+          </div>
+          <div>
+            <label class="rotulo" for="senha">Senha</label>
+            <input class="campo" type="password" id="senha" name="senha"
+                   autocomplete="current-password" required>
+          </div>
+          <div id="erro-entrar" class="aviso aviso-erro oculto"></div>
+          <button class="botao botao-primario" type="submit" id="botao-entrar">Entrar</button>
+        </form>
+      </section>
+
+      <!-- primeiro acesso: a conta existe, mas ainda não tem senha -->
+      <section id="bloco-primeiro" class="oculto">
+        <h1>Criar sua senha</h1>
+        <p class="sub" id="texto-primeiro">
+          Esta conta ainda não tem senha. Defina a sua agora.
+        </p>
+        <form id="form-primeiro" class="campos">
+          <div>
+            <label class="rotulo" for="nova">Nova senha</label>
+            <input class="campo" type="password" id="nova" name="senha"
+                   autocomplete="new-password" minlength="8" required>
+          </div>
+          <div>
+            <label class="rotulo" for="repeticao">Repita a senha</label>
+            <input class="campo" type="password" id="repeticao" name="repeticao"
+                   autocomplete="new-password" minlength="8" required>
+          </div>
+          <div id="erro-primeiro" class="aviso aviso-erro oculto"></div>
+          <button class="botao botao-primario" type="submit">Criar senha e entrar</button>
+          <button class="botao botao-fantasma" type="button" id="voltar-entrar">Voltar</button>
+        </form>
+      </section>
+
+      <div class="rodape-lateral" style="margin-top:24px">
+        <button class="botao botao-fantasma botao-p" type="button"
+                id="botao-tema">Alternar tema</button>
+      </div>
+    </div>
+  </main>
+  <script src="/static/login.js"></script>
+</body>
+</html>

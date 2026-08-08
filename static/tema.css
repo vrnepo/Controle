@@ -1,0 +1,108 @@
+/* ==========================================================================
+   Controle Financeiro 3.0 — TEMA (design system)
+
+   A fonte única de cor, espaço, raio e tipografia. Nenhum valor de cor
+   literal fora deste arquivo: componente usa token, sempre. Foi o que
+   permitiu, no SICAD, trocar o tema inteiro sem caçar hexadecimal no CSS.
+
+   Escuro é o padrão; claro entra com data-tema="claro" na raiz, aplicado
+   ANTES da primeira pintura (script no <head>) para a tela não piscar.
+
+   Sem Google Fonts de propósito: a CSP do servidor é default-src 'self', e
+   uma pilha de fontes do sistema não custa requisição nenhuma nem quebra se
+   a CDN cair.
+   ========================================================================== */
+
+:root {
+  /* --- superfícies (escuro) */
+  --fundo:            #0b1020;
+  --fundo-alto:       #111a33;
+  --superficie:       #16203c;
+  --superficie-alta:  #1d2a4d;
+  --borda:            #26355c;
+  --borda-suave:      #1c2847;
+
+  /* --- texto */
+  --texto:            #e8edf9;
+  --texto-medio:      #a7b3d0;
+  --texto-fraco:      #6f7da3;
+
+  /* --- marca e semântica */
+  --marca:            #4f8cff;
+  --marca-forte:      #2f6fe4;
+  --marca-suave:      rgba(79, 140, 255, 0.14);
+
+  --receita:          #34d399;
+  --receita-suave:    rgba(52, 211, 153, 0.14);
+  --despesa:          #fb7185;
+  --despesa-suave:    rgba(251, 113, 133, 0.14);
+  --alerta:           #fbbf24;
+  --alerta-suave:     rgba(251, 191, 36, 0.15);
+  --neutro:           #7c8db5;
+
+  /* --- paleta de categorias: 10 tons distinguíveis, inclusive lado a lado */
+  --c1:  #4f8cff;  --c2:  #34d399;  --c3:  #fbbf24;  --c4:  #fb7185;
+  --c5:  #a78bfa;  --c6:  #22d3ee;  --c7:  #fb923c;  --c8:  #f472b6;
+  --c9:  #2dd4bf;  --c10: #94a3b8;
+
+  /* --- forma e ritmo */
+  --raio-p: 6px;
+  --raio:   10px;
+  --raio-g: 16px;
+  --esp-1: 4px;  --esp-2: 8px;   --esp-3: 12px;  --esp-4: 16px;
+  --esp-5: 24px; --esp-6: 32px;  --esp-7: 48px;
+
+  --sombra:      0 1px 2px rgba(0, 0, 0, .28), 0 8px 24px rgba(0, 0, 0, .22);
+  --sombra-alta: 0 2px 4px rgba(0, 0, 0, .3),  0 16px 48px rgba(0, 0, 0, .35);
+
+  /* --- tipografia */
+  --fonte: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+           Arial, "Noto Sans", sans-serif;
+  --fonte-num: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+               "Liberation Mono", monospace;
+
+  --t-xs:  11px;
+  --t-p:   12px;
+  --t-m:   13px;
+  --t-base:14px;
+  --t-g:   16px;
+  --t-gg:  20px;
+  --t-tit: 26px;
+  --t-num: 30px;
+
+  --transicao: 160ms cubic-bezier(.4, 0, .2, 1);
+}
+
+:root[data-tema="claro"] {
+  --fundo:            #f5f7fc;
+  --fundo-alto:       #ffffff;
+  --superficie:       #ffffff;
+  --superficie-alta:  #eef2fa;
+  --borda:            #d7dfef;
+  --borda-suave:      #e6ecf7;
+
+  --texto:            #14203a;
+  --texto-medio:      #4a5878;
+  --texto-fraco:      #7b88a6;
+
+  --marca:            #2f6fe4;
+  --marca-forte:      #1d55bd;
+  --marca-suave:      rgba(47, 111, 228, 0.10);
+
+  --receita:          #0f9b6c;
+  --receita-suave:    rgba(15, 155, 108, 0.12);
+  --despesa:          #d94961;
+  --despesa-suave:    rgba(217, 73, 97, 0.12);
+  --alerta:           #b57d00;
+  --alerta-suave:     rgba(181, 125, 0, 0.14);
+  --neutro:           #64748b;
+
+  --sombra:      0 1px 2px rgba(20, 32, 58, .06), 0 8px 20px rgba(20, 32, 58, .07);
+  --sombra-alta: 0 2px 6px rgba(20, 32, 58, .09), 0 18px 44px rgba(20, 32, 58, .12);
+}
+
+/* Respeita quem pede menos animação no sistema. */
+@media (prefers-reduced-motion: reduce) {
+  :root { --transicao: 0ms; }
+  * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+}

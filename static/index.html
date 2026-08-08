@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Controle Financeiro</title>
+  <link rel="stylesheet" href="/static/tema.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/tema.js"></script>
+</head>
+<body>
+<div class="app">
+  <aside class="lateral">
+    <div class="marca">
+      <div class="marca-icone">CF</div>
+      <div class="marca-texto">Controle Financeiro<span id="nome-usuario">carregando…</span></div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <div class="nav-titulo">Acompanhar</div>
+      <button data-tela="painel" aria-current="page"><i class="ponto"></i>Painel</button>
+      <button data-tela="lancamentos"><i class="ponto"></i>Lançamentos</button>
+      <button data-tela="conciliacao"><i class="ponto"></i>Conciliação</button>
+      <div class="nav-titulo">Alimentar</div>
+      <button data-tela="importar"><i class="ponto"></i>Importar arquivos</button>
+      <button data-tela="faturas"><i class="ponto"></i>Resumo de faturas</button>
+      <div class="nav-titulo">Ajustar</div>
+      <button data-tela="regras"><i class="ponto"></i>Regras</button>
+      <button data-tela="ajustes"><i class="ponto"></i>Espelho e diagnóstico</button>
+    </nav>
+
+    <div class="rodape-lateral">
+      <button class="botao botao-fantasma botao-p" type="button" id="botao-tema">
+        Alternar tema
+      </button>
+      <button class="botao botao-fantasma botao-p" type="button" id="botao-sair">
+        Sair
+      </button>
+      <span id="versao"></span>
+    </div>
+  </aside>
+
+  <main class="conteudo">
+    <div class="topo">
+      <div>
+        <h1 id="titulo-tela">Painel</h1>
+        <p id="subtitulo-tela">Carregando…</p>
+      </div>
+      <div class="topo-acoes">
+        <label class="rotulo oculto" for="seletor-mes">Mês</label>
+        <select class="campo campo-auto" id="seletor-mes"></select>
+        <button class="botao" type="button" id="botao-espelhar">Espelhar na planilha</button>
+      </div>
+    </div>
+
+    <div id="mensagem-global"></div>
+    <section id="tela"></section>
+  </main>
+</div>
+
+<script src="/static/graficos.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
