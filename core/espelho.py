@@ -587,6 +587,65 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
             _formatar(painel, {"B%d" % nova_linha: FORMATO_MOEDA})
             sid, grade = ler_grade()
 
+    # --- 0d. linha "Saldo inicial do mês" no TOPO do grupo RECEITAS, acima
+    # do Salário, somando no Subtotal (decisão do usuário, 09/08/2026). É a
+    # mesma informação das linhas de transporte da aba Lançamentos
+    # (Tipo="Saldo"), agregada por mês — cobre as duas contas-correntes.
+    # O critério "Extrato" já vai embutido para o auto-reparo não reescrever.
+    if achar("SALDO INICIAL DO M") is None:
+        r_salario = achar("SALÁRIO")
+        if r_salario is not None:
+            planilha.batch_update({"requests": [{"insertDimension": {
+                "range": {"sheetId": sid, "dimension": "ROWS",
+                          "startIndex": r_salario, "endIndex": r_salario + 1},
+                "inheritFromBefore": False}}]})
+            nova = r_salario + 1                       # 1-based
+            painel.batch_update([
+                {"range": "A%d" % nova,
+                 "values": [["    Saldo inicial do mês (transporte)"]]},
+                {"range": "B%d" % nova,
+                 "values": [["=SUMIFS('Lançamentos'!$J$4:$J$100000;"
+                             "'Lançamentos'!$I$4:$I$100000;\"Saldo\";"
+                             "'Lançamentos'!$B$4:$B$100000;\"Extrato\";"
+                             "'Lançamentos'!$K$4:$K$100000;$E$4)"]]},
+                {"range": "F%d" % nova,
+                 "values": [["saldo final do mês anterior, transportado"]]},
+            ], value_input_option="USER_ENTERED")
+            _formatar(painel, {"B%d" % nova: FORMATO_MOEDA})
+            sid, grade = ler_grade()
+
+    # garante o Subtotal — RECEITAS cobrindo do primeiro ao último item do
+    # grupo (as inserções acima deslocam o SUM em vez de expandi-lo)
+    r_rec = achar("RECEITAS")
+    r_sub_rec = None
+    if r_rec is not None:
+        for r in range(r_rec + 1, len(grade)):
+            rotulo = texto_a(r).upper()
+            if rotulo.startswith("SUBTOTAL") and "RECEITAS" in rotulo:
+                r_sub_rec = r
+                break
+    if r_rec is not None and r_sub_rec is not None and r_sub_rec > r_rec + 1:
+        primeira, ultima, subtotal = r_rec + 2, r_sub_rec, r_sub_rec + 1
+        painel.batch_update([
+            {"range": "B%d" % subtotal,
+             "values": [["=SUM($B%d:$B%d)" % (primeira, ultima)]]},
+            {"range": "C%d" % subtotal,
+             "values": [["=SUM($C%d:$C%d)" % (primeira, ultima)]]},
+        ], value_input_option="USER_ENTERED")
+
+    # --- 0e. destaque amarelo na linha-memo do saldo em conta (decisão do
+    # usuário, 09/08/2026), com fonte escura para leitura sobre o amarelo.
+    r_memo = achar("SALDO EM CONTA CORRENTE")
+    if r_memo is not None:
+        try:
+            painel.format("A%d:F%d" % (r_memo + 1, r_memo + 1), {
+                "backgroundColor": {"red": 1.0, "green": 0.898, "blue": 0.6},
+                "textFormat": {"bold": True,
+                               "foregroundColor": {"red": 0.25, "green": 0.17,
+                                                   "blue": 0.0}}})
+        except Exception:
+            pass
+
     # --- 1. critério Extrato nas RECEITAS e nos grupos de despesa (B e C).
     # RECEITAS também (decisão do usuário, 09/08/2026): só entradas que
     # passaram pelo extrato — estorno de cartão, por exemplo, já está dentro
