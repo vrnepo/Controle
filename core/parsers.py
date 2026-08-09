@@ -536,6 +536,24 @@ def _pdf_santander_fatura(nome: str, texto: str, metades: List[str]) -> Leitura:
                          "competencia": comp, "arquivo": nome})
         r.avisos.append("Ajuste de %s: a soma dos itens ficou %s e o resumo declara %s."
                         % (diferenca, round(soma_itens, 2), round(declarado, 2)))
+
+    # Decisão do usuário (08/08/2026): na fatura do SANTANDER, os lançamentos
+    # do mês devem somar exatamente o "(=) Saldo Desta Fatura" do resumo. Por
+    # isso, quando há saldo anterior aumentando a fatura, ele entra como
+    # lançamento — e os pagamentos recebidos nela também (só nesse caso).
+    # As duas linhas são categorizadas como TRANSFERÊNCIA pelas Regras: somam
+    # no total da fatura, mas não contam como despesa do mês — o saldo
+    # anterior é gasto do mês passado, que já foi contado lá.
+    if saldo > 0.005:
+        r.linhas.append({"data": dt.date(ano, mes, 1),
+                         "descricao": "Saldo anterior da fatura", "valor": -saldo,
+                         "conta": "Cartão Santander", "competencia": comp,
+                         "arquivo": nome})
+        if pagamentos > 0.005:
+            r.linhas.append({"data": dt.date(ano, mes, 1),
+                             "descricao": "Pagamentos recebidos na fatura",
+                             "valor": pagamentos, "conta": "Cartão Santander",
+                             "competencia": comp, "arquivo": nome})
     return r
 
 

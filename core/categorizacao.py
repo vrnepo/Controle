@@ -25,6 +25,11 @@ REGRAS_PADRAO: List[Tuple[str, str, str, str, str]] = [
     (r"PAGAMENTO DE FATURA|PAGAMENTO CARTAO CREDITO|PIX ENVIADO \d+ BANCO SANTANDER"
      r"|PAGAMENTO DE BOLETO BANCO SANTANDER",
      config.CATEGORIA_TRANSFERENCIA, "Pagamento de fatura", "", ""),
+    # Linhas de fechamento da fatura Santander (decisão do usuário, 08/08/2026):
+    # entram como lançamento para o total da fatura bater com o "Saldo Desta
+    # Fatura" do resumo, mas como TRANSFERÊNCIA — não são gasto novo do mês.
+    (r"SALDO ANTERIOR DA FATURA|PAGAMENTOS RECEBIDOS NA FATURA",
+     config.CATEGORIA_TRANSFERENCIA, "Fechamento da fatura", "", "Transferência"),
     (r"\bVITOR\b", config.CATEGORIA_TRANSFERENCIA, "Entre contas próprias", "", ""),
 
     # --- receitas

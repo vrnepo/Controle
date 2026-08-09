@@ -226,7 +226,10 @@ def test_fatura_santander_fecha_com_o_total_do_app():
     base = pasta()
     if not base:
         pytest.skip("pasta _Controle Financeiro não encontrada nesta máquina")
-    faturas = sorted(glob.glob(os.path.join(base, "Santander Fatura_*.PDF")))
+    # [Pp][Dd][Ff]: o Drive renomeou três faturas para .pdf minúsculo em
+    # 08/08/2026 e o glob exato fazia o teste PULAR em silêncio — inclusive o
+    # de regressão de jul/26, justamente o mês do bug.
+    faturas = sorted(glob.glob(os.path.join(base, "Santander Fatura_*.[Pp][Dd][Ff]")))
     if not faturas:
         pytest.skip("nenhuma fatura do Santander na pasta")
 
@@ -243,11 +246,13 @@ def test_fatura_santander_fecha_com_o_total_do_app():
             "%s: reconstruí %.2f e a fatura declara %.2f"
             % (nome, calculado, s["total_informado"]))
 
-        # a soma dos lançamentos precisa igualar despesas + encargos − créditos
+        # Decisão do usuário (08/08/2026): com saldo anterior e pagamentos
+        # entrando como lançamentos, a soma do mês é o "(=) Saldo Desta
+        # Fatura" — o mesmo número que o app do banco mostra.
         soma = sum(l["valor"] for l in r.linhas)
-        esperado = -(s["despesas"] + s["encargos"] - s["creditos"])
-        assert abs(soma - esperado) < 0.02, (
-            "%s: itens somam %.2f e o resumo pede %.2f" % (nome, soma, esperado))
+        assert abs(soma + s["total_informado"]) < 0.02, (
+            "%s: lançamentos somam %.2f e o Saldo Desta Fatura é %.2f"
+            % (nome, soma, s["total_informado"]))
 
 
 @pytest.mark.skipif(not SENHA, reason="SENHA_PDF_SANTANDER não configurada")
@@ -262,7 +267,7 @@ def test_juros_de_credito_rotativo_de_julho():
     base = pasta()
     if not base:
         pytest.skip("pasta não encontrada")
-    achados = glob.glob(os.path.join(base, "Santander Fatura_072026*.PDF"))
+    achados = glob.glob(os.path.join(base, "Santander Fatura_072026*.[Pp][Dd][Ff]"))
     if not achados:
         pytest.skip("fatura de jul/2026 não está na pasta")
 
@@ -272,4 +277,10 @@ def test_juros_de_credito_rotativo_de_julho():
     assert abs(r.resumos[0]["encargos"] - 739.20) < 0.01
     juros = [l for l in r.linhas if "Rotativo" in l["descricao"]]
     assert juros and abs(juros[0]["valor"] + 726.52) < 0.01
-    assert abs(sum(l["valor"] for l in r.linhas) + 9216.26) < 0.02
+    # soma = Saldo Desta Fatura: 13.015,43 + 9.216,26 − 8.500,00 = 13.731,69
+    assert abs(sum(l["valor"] for l in r.linhas) + 13731.69) < 0.02
+    # e as duas linhas de fechamento existem com os valores do resumo
+    saldo = [l for l in r.linhas if l["descricao"] == "Saldo anterior da fatura"]
+    pagos = [l for l in r.linhas if l["descricao"] == "Pagamentos recebidos na fatura"]
+    assert saldo and abs(saldo[0]["valor"] + 13015.43) < 0.01
+    assert pagos and abs(pagos[0]["valor"] - 8500.00) < 0.01

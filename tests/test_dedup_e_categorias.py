@@ -119,6 +119,22 @@ def test_transferencia_vence_tudo():
     assert r["item_fixo"] == ""      # transferência não é item fixo
 
 
+def test_fechamento_da_fatura_e_transferencia():
+    """Saldo anterior e pagamentos da fatura Santander (decisão de 08/08/2026):
+    entram nos lançamentos para a soma bater com o Saldo Desta Fatura, mas como
+    Transferência — senão o resultado do mês contaria o saldo de novo."""
+    r1 = categorizacao.classificar("Saldo anterior da fatura", -13015.43,
+                                   "cartao", regras())
+    r2 = categorizacao.classificar("Pagamentos recebidos na fatura", 8500.00,
+                                   "cartao", regras())
+    for r in (r1, r2):
+        assert r["tipo"] == config.TIPO_TRANSFERENCIA
+        assert r["categoria"] == config.CATEGORIA_TRANSFERENCIA
+        assert r["item_fixo"] == ""
+    # e o estorno de cartão não é capturado por engano pela regra nova
+    assert "(estorno)" not in r2["subcategoria"]
+
+
 def test_pix_para_si_mesmo_e_transferencia():
     r = categorizacao.classificar(
         "PIX RECEBIDO Vitor Alencar Farias Nepo", 1771.72, "conta", regras())

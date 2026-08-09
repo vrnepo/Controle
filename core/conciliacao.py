@@ -30,7 +30,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any, Dict, List, Optional
 
-from core import repositorio
+from core import config, repositorio
 
 TOLERANCIA = 0.05        # centavos de arredondamento não são divergência
 
@@ -82,8 +82,14 @@ def linhas(competencia: Optional[dt.date] = None) -> List[Dict[str, Any]]:
             novo = despesas + encargos - creditos
             calculado = saldo + novo - pagamentos
 
+            # O que a soma dos lançamentos DEVE dar depende do desenho da
+            # conta: no Cartão Santander os lançamentos incluem saldo anterior
+            # e pagamentos (config.CONTAS_FATURA_TOTAL), então a soma esperada
+            # é o próprio Saldo Desta Fatura; nas demais, só o gasto novo.
+            esperado = calculado if conta in config.CONTAS_FATURA_TOTAL else novo
+
             linha["despesas_encargos"] = round(novo, 2)
-            linha["delta_importacao"] = round(gasto - novo, 2)
+            linha["delta_importacao"] = round(gasto - esperado, 2)
             linha["saldo_anterior"] = round(saldo, 2)
             linha["pagamentos"] = round(pagamentos, 2)
             linha["total_calculado"] = round(calculado, 2)
@@ -93,9 +99,10 @@ def linhas(competencia: Optional[dt.date] = None) -> List[Dict[str, Any]]:
             if abs(linha["delta_importacao"]) > TOLERANCIA:
                 linha["situacao"] = "importacao_incompleta"
                 linha["explicacao"] = (
-                    "Faltam %s em lançamentos: o resumo da fatura declara %s de "
-                    "despesas e encargos, e os lançamentos somam %s."
-                    % (_moeda(abs(linha["delta_importacao"])), _moeda(novo), _moeda(gasto)))
+                    "Faltam %s em lançamentos: pelo resumo da fatura a soma deveria "
+                    "ser %s, e os lançamentos somam %s."
+                    % (_moeda(abs(linha["delta_importacao"])), _moeda(esperado),
+                       _moeda(gasto)))
             elif linha["delta_app"] is not None and abs(linha["delta_app"]) > TOLERANCIA:
                 linha["situacao"] = "conferir_resumo"
                 linha["explicacao"] = (
@@ -104,7 +111,11 @@ def linhas(competencia: Optional[dt.date] = None) -> List[Dict[str, Any]]:
                     % (_moeda(calculado), _moeda(informado)))
             else:
                 linha["situacao"] = "ok"
-                if informado and abs(gasto - informado) > TOLERANCIA:
+                if conta in config.CONTAS_FATURA_TOTAL:
+                    linha["explicacao"] = (
+                        "Os lançamentos incluem saldo anterior e pagamentos: a soma "
+                        "%s é o próprio Saldo Desta Fatura." % _moeda(gasto))
+                elif informado and abs(gasto - informado) > TOLERANCIA:
                     linha["explicacao"] = (
                         "Gasto do mês %s; o app mostra %s porque %s vieram de saldo "
                         "anterior e %s foram pagos. Diferença esperada."

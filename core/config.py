@@ -83,6 +83,12 @@ CATEGORIAS = [
 # dobraria o mês, porque a despesa já entrou quando a compra foi feita.
 CATEGORIAS_FORA_DO_RESULTADO = [CATEGORIA_TRANSFERENCIA]
 
+# Cartões cuja fatura, por decisão do usuário (08/08/2026), carrega TAMBÉM o
+# saldo anterior e os pagamentos como lançamentos (tipo Transferência): a soma
+# dos lançamentos do mês passa a ser o "(=) Saldo Desta Fatura" do resumo.
+# A conciliação usa esta lista para saber o que esperar da soma.
+CONTAS_FATURA_TOTAL = ["Cartão Santander"]
+
 MESES_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
             "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
 
