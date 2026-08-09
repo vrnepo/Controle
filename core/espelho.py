@@ -474,15 +474,17 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
     AUTO-REPARADOR: reescreve as fórmulas dos grupos em toda sincronização,
     então uma fórmula quebrada ali se conserta na rodada seguinte.
     """
-    meta = planilha.fetch_sheet_metadata({
-        "ranges": "'Painel Mensal'!A1:F80",
-        "includeGridData": True,
-        "fields": "sheets(properties(sheetId,title),"
-                  "data(rowData(values(userEnteredValue,formattedValue))))"})
-    folha = next(s for s in meta["sheets"]
-                 if s["properties"]["title"] == "Painel Mensal")
-    sid = folha["properties"]["sheetId"]
-    grade = folha["data"][0].get("rowData", [])
+    def ler_grade():
+        meta = planilha.fetch_sheet_metadata({
+            "ranges": "'Painel Mensal'!A1:F80",
+            "includeGridData": True,
+            "fields": "sheets(properties(sheetId,title),"
+                      "data(rowData(values(userEnteredValue,formattedValue))))"})
+        folha = next(s for s in meta["sheets"]
+                     if s["properties"]["title"] == "Painel Mensal")
+        return folha["properties"]["sheetId"], folha["data"][0].get("rowData", [])
+
+    sid, grade = ler_grade()
 
     def celula(r: int, c: int) -> Dict[str, Any]:
         try:
@@ -494,14 +496,64 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
         return (celula(r, 0).get("formattedValue") or "").strip()
 
     def formula(r: int, c: int) -> str:
-        return (celula(r, 0 + c).get("userEnteredValue") or {}).get("formulaValue") or ""
+        return (celula(r, c).get("userEnteredValue") or {}).get("formulaValue") or ""
 
-    pedidos: List[Dict[str, Any]] = []
+    def achar(prefixo: str) -> Optional[int]:
+        alvo = prefixo.upper()
+        for r in range(len(grade)):
+            if texto_a(r).upper().startswith(alvo):
+                return r
+        return None
 
-    # --- 1. critério Extrato nos grupos de despesa (colunas B e C).
-    # SEMPRE reescreve (auto-reparo): a leitura vem canônica, o critério é
-    # garantido e a fórmula desce no dialeto pt-BR via USER_ENTERED.
-    GRUPOS = ("APARTAMENTO", "FLAT", "PESSOAIS FIXAS", "DESPESAS VARI")
+    # --- 0. RESULTADO DO MÊS sobe para a linha 5 (uma vez só)
+    if not texto_a(4).upper().startswith("RESULTADO"):
+        inicio = achar("RESULTADO DO M")
+        fim = None
+        if inicio is not None:
+            for r in range(inicio, len(grade)):
+                if texto_a(r).lower().startswith("resultado (sobra"):
+                    fim = r
+                    break
+        if inicio is not None and fim is not None and inicio > 4:
+            planilha.batch_update({"requests": [{"moveDimension": {
+                "source": {"sheetId": sid, "dimension": "ROWS",
+                           "startIndex": inicio, "endIndex": fim + 1},
+                "destinationIndex": 4}}]})
+            sid, grade = ler_grade()
+
+    # --- 0b. linha-memo "Saldo em conta corrente" ACIMA do grupo RECEITAS
+    # (decisão do usuário, 09/08/2026): mostra o saldo acumulado da Conta
+    # Santander até o mês selecionado — o número comparável com o app. É memo:
+    # não entra em subtotal nenhum, e exclui as linhas de transporte
+    # (Tipo="Saldo") para não contar o carregado duas vezes.
+    if achar("SALDO EM CONTA CORRENTE") is None:
+        r_receitas = achar("RECEITAS")
+        if r_receitas is not None and r_receitas > 0:
+            planilha.batch_update({"requests": [{"insertDimension": {
+                "range": {"sheetId": sid, "dimension": "ROWS",
+                          "startIndex": r_receitas, "endIndex": r_receitas + 1},
+                "inheritFromBefore": False}}]})
+            linha = r_receitas + 1                      # 1-based na planilha
+            painel.batch_update([
+                {"range": "A%d" % linha,
+                 "values": [["Saldo em conta corrente (Santander) — até o mês selecionado"]]},
+                {"range": "B%d" % linha,
+                 "values": [["=SUMIFS('Lançamentos'!$J$4:$J$100000;"
+                             "'Lançamentos'!$H$4:$H$100000;\"Conta Santander\";"
+                             "'Lançamentos'!$K$4:$K$100000;\"<=\"&$E$4;"
+                             "'Lançamentos'!$I$4:$I$100000;\"<>Saldo\")"]]},
+                {"range": "F%d" % linha,
+                 "values": [["memo — compare com o Saldo disponível do app"]]},
+            ], value_input_option="USER_ENTERED")
+            _formatar(painel, {"B%d" % linha: FORMATO_MOEDA})
+            sid, grade = ler_grade()
+
+    # --- 1. critério Extrato nas RECEITAS e nos grupos de despesa (B e C).
+    # RECEITAS também (decisão do usuário, 09/08/2026): só entradas que
+    # passaram pelo extrato — estorno de cartão, por exemplo, já está dentro
+    # da fatura. SEMPRE reescreve (auto-reparo): a leitura vem canônica, o
+    # critério é garantido e a fórmula desce no dialeto pt-BR.
+    GRUPOS = ("RECEITAS", "APARTAMENTO", "FLAT", "PESSOAIS FIXAS", "DESPESAS VARI")
     celulas_valores: List[Dict[str, Any]] = []
     dentro = False
     for r in range(len(grade)):
@@ -511,7 +563,8 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
         if any(rotulo.startswith(g) for g in GRUPOS):
             dentro = True
             continue
-        if rotulo.startswith("SUBTOTAL") or rotulo.startswith("RESULTADO"):
+        if (rotulo.startswith("SUBTOTAL") or rotulo.startswith("RESULTADO")
+                or rotulo.startswith("FATURAS")):
             dentro = False
             continue
         if not dentro:
@@ -524,26 +577,24 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
             celulas_valores.append({
                 "range": "%s%d" % ("B" if c == 1 else "C", r + 1),
                 "values": [[nova]]})
+
+    # --- 2. faturas de cartão entram no "Total de despesas" (decisão do
+    # usuário, 09/08/2026). Os grupos de despesa estão filtrados a Extrato,
+    # então somar as faturas por cima NÃO conta nada duas vezes: compra de
+    # cartão só existe dentro da fatura.
+    r_total = achar("TOTAL DE DESPESAS")
+    r_faturas = achar("SUBTOTAL — FATURAS")
+    if r_total is not None and r_faturas is not None:
+        for c, letra in ((1, "B"), (2, "C")):
+            f = formula(r_total, c)
+            ref = "$%s$%d" % (letra, r_faturas + 1)
+            if f and ref not in f:
+                celulas_valores.append({
+                    "range": "%s%d" % (letra, r_total + 1),
+                    "values": [[_para_dialeto_pt(f) + "+" + ref]]})
+
     if celulas_valores:
         painel.batch_update(celulas_valores, value_input_option="USER_ENTERED")
-
-    # --- 2. RESULTADO DO MÊS sobe para a linha 5
-    if not texto_a(4).upper().startswith("RESULTADO"):
-        inicio = fim = None
-        for r in range(len(grade)):
-            if texto_a(r).upper().startswith("RESULTADO DO M"):
-                inicio = r
-            if inicio is not None and texto_a(r).lower().startswith("resultado (sobra"):
-                fim = r
-                break
-        if inicio is not None and fim is not None and inicio > 4:
-            pedidos.append({"moveDimension": {
-                "source": {"sheetId": sid, "dimension": "ROWS",
-                           "startIndex": inicio, "endIndex": fim + 1},
-                "destinationIndex": 4}})
-
-    if pedidos:
-        planilha.batch_update({"requests": pedidos})
 
 
 def _validacoes_painel_mensal(planilha, painel) -> None:
