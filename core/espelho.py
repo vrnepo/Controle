@@ -587,32 +587,43 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
             _formatar(painel, {"B%d" % nova_linha: FORMATO_MOEDA})
             sid, grade = ler_grade()
 
-    # --- 0d. linha "Saldo inicial do mês" no TOPO do grupo RECEITAS, acima
-    # do Salário, somando no Subtotal (decisão do usuário, 09/08/2026). É a
-    # mesma informação das linhas de transporte da aba Lançamentos
-    # (Tipo="Saldo"), agregada por mês — cobre as duas contas-correntes.
-    # O critério "Extrato" já vai embutido para o auto-reparo não reescrever.
-    if achar("SALDO INICIAL DO M") is None:
+    # --- 0d. linha "Saldo do mês anterior (SANTANDER)" no TOPO do grupo
+    # RECEITAS, acima do Salário, somando no Subtotal (decisão do usuário,
+    # 09/08/2026). SÓ a Conta Santander, de propósito: o saldo da Conta
+    # Nubank foi transferido para a Santander e já entra pela linha de
+    # transferências recebidas — somar o transporte dele aqui contaria o
+    # mesmo dinheiro duas vezes. A linha inteira (rótulo, fórmula, nota) é
+    # regravada a cada sincronização — auto-reparo, e foi assim que o nome
+    # antigo ("Saldo inicial do mês") migrou para o atual.
+    r_saldo_mes = achar("SALDO DO MÊS ANTERIOR")
+    if r_saldo_mes is None:
+        r_saldo_mes = achar("SALDO INICIAL DO M")      # nome antigo: migra
+    if r_saldo_mes is None:
         r_salario = achar("SALÁRIO")
         if r_salario is not None:
             planilha.batch_update({"requests": [{"insertDimension": {
                 "range": {"sheetId": sid, "dimension": "ROWS",
                           "startIndex": r_salario, "endIndex": r_salario + 1},
                 "inheritFromBefore": False}}]})
-            nova = r_salario + 1                       # 1-based
-            painel.batch_update([
-                {"range": "A%d" % nova,
-                 "values": [["    Saldo inicial do mês (transporte)"]]},
-                {"range": "B%d" % nova,
-                 "values": [["=SUMIFS('Lançamentos'!$J$4:$J$100000;"
-                             "'Lançamentos'!$I$4:$I$100000;\"Saldo\";"
-                             "'Lançamentos'!$B$4:$B$100000;\"Extrato\";"
-                             "'Lançamentos'!$K$4:$K$100000;$E$4)"]]},
-                {"range": "F%d" % nova,
-                 "values": [["saldo final do mês anterior, transportado"]]},
-            ], value_input_option="USER_ENTERED")
-            _formatar(painel, {"B%d" % nova: FORMATO_MOEDA})
+            r_saldo_mes = r_salario
             sid, grade = ler_grade()
+    if r_saldo_mes is not None:
+        linha = r_saldo_mes + 1                        # 1-based
+        painel.batch_update([
+            {"range": "A%d" % linha,
+             "values": [["    Saldo do mês anterior (SANTANDER)"]]},
+            {"range": "B%d" % linha,
+             "values": [["=SUMIFS('Lançamentos'!$J$4:$J$100000;"
+                         "'Lançamentos'!$I$4:$I$100000;\"Saldo\";"
+                         "'Lançamentos'!$H$4:$H$100000;\"Conta Santander\";"
+                         "'Lançamentos'!$B$4:$B$100000;\"Extrato\";"
+                         "'Lançamentos'!$K$4:$K$100000;$E$4)"]]},
+            {"range": "F%d" % linha,
+             "values": [["saldo final do mês anterior na Conta Santander "
+                         "(o da Nubank já entra em transferências recebidas)"]]},
+        ], value_input_option="USER_ENTERED")
+        _formatar(painel, {"B%d" % linha: FORMATO_MOEDA})
+        sid, grade = ler_grade()
 
     # garante o Subtotal — RECEITAS cobrindo do primeiro ao último item do
     # grupo (as inserções acima deslocam o SUM em vez de expandi-lo)
