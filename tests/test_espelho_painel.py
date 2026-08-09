@@ -6,7 +6,7 @@ As fórmulas dos testes são as REAIS da planilha, na forma canônica da API.
 
 from __future__ import annotations
 
-from core.espelho import _para_dialeto_pt, _sumifs_com_extrato
+from core.espelho import _para_dialeto_pt, _sumifs_com_extrato, _trocar_coluna
 
 CRITERIO = ",'Lançamentos'!$B$4:$B$2177,\"Extrato\""
 
@@ -50,6 +50,38 @@ def test_idempotente():
 def test_sumifs_sem_lancamentos_fica_como_esta():
     f = "=SUMIFS(Faturas!$D$4:$D$27,Faturas!$A$4:$A$27,$E$4)"
     assert _sumifs_com_extrato(f) == f
+
+
+# --------------------------------------------- réplica da coluna Previsão
+
+def test_troca_o_subtotal_para_a_propria_coluna():
+    """A réplica em B tem de somar a si mesma, não a coluna de origem."""
+    assert _trocar_coluna("=SUM($C7:$C15)", "C", "B") == "=SUM($B7:$B15)"
+
+
+def test_troca_referencias_relativas_e_mistas():
+    assert _trocar_coluna("=C6-C7+$C$24", "C", "B") == "=B6-B7+$B$24"
+
+
+def test_nao_troca_referencia_qualificada_de_outra_aba():
+    f = "=SUMIFS(Faturas!$C$4:$C$27,Faturas!C4,$F$4)"
+    assert _trocar_coluna(f, "C", "B") == f
+
+
+def test_nao_troca_dentro_de_aspas_nem_nome_de_funcao():
+    """O C de COUNTIFS não é referência (sem dígito depois) e "C7" entre
+    aspas é texto — só o C7 solto no fim pode virar B7."""
+    f = '=IF(COUNTIFS(Faturas!$A$4:$A$27,"<="&$F$4),"C7 no texto",C7)'
+    assert _trocar_coluna(f, "C", "B") == (
+        '=IF(COUNTIFS(Faturas!$A$4:$A$27,"<="&$F$4),"C7 no texto",B7)')
+
+
+def test_formula_real_dos_grupos_fica_intacta():
+    """As SUMIFS dos grupos só referenciam Lançamentos e $F$4 — a réplica
+    delas é idêntica à origem."""
+    f = ("=SUMIFS('Lançamentos'!$J$4:$J$2177,'Lançamentos'!$G$4:$G$2177,"
+         "\"Cozinheira\",'Lançamentos'!$K$4:$K$2177,$F$4)")
+    assert _trocar_coluna(f, "C", "B") == f
 
 
 # ------------------------------------------------- transporte de saldo

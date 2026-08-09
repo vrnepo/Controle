@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -370,8 +371,12 @@ def sincronizar() -> Dict[str, int]:
     try:
         painel = planilha.worksheet("Painel Mensal")
         painel.update_index(0)
-        _validacoes_painel_mensal(planilha, painel)
-        _ajustar_painel_mensal(planilha, painel)
+        # A coluna Previsão vem PRIMEIRO: validações e ajustador escrevem em
+        # endereços do layout novo (seletores C4/E4, valores em C/D). Se ela
+        # não puder garantir o layout, nada mais mexe no Painel nesta rodada.
+        if _coluna_previsao(planilha, painel):
+            _validacoes_painel_mensal(planilha, painel)
+            _ajustar_painel_mensal(planilha, painel)
     except Exception:
         pass
 
@@ -460,6 +465,126 @@ def _para_dialeto_pt(formula: str) -> str:
     return "".join(saida)
 
 
+def _trocar_coluna(formula: str, de: str, para: str) -> str:
+    """
+    Troca as referências à coluna `de` pela coluna `para` numa fórmula
+    CANÔNICA — só as referências à própria aba: "Faturas!C4" e o texto entre
+    aspas ficam intactos. É o que torna a coluna Previsão uma réplica
+    autossuficiente da "Mês selecionado" (09/08/2026): =SUM($C7:$C15) vira
+    =SUM($B7:$B15) — o subtotal da Previsão soma a própria Previsão —
+    enquanto 'Lançamentos'!$J$4 e $F$4 não mudam.
+
+    As referências qualificadas são protegidas por INTEIRO antes da troca,
+    inclusive intervalos: em "Faturas!$C$4:$C$27" o "$C$27" vem depois do
+    ":" sem qualificador colado nele — sem a proteção, só a primeira metade
+    escaparia. O padrão da troca exige dígito depois da coluna (não casa o
+    C de COUNTIFS) e proíbe letra, dígito, "!", "." ou "$" logo antes.
+    """
+    qualificada = re.compile(
+        r"(?:'[^']*'|[A-Za-z0-9_.]+)!\$?[A-Z]{1,3}\$?\d*(?::\$?[A-Z]{1,3}\$?\d*)?")
+    padrao = re.compile(r"(?<![A-Za-z0-9_.!$])(\$?)%s(?=\$?\d)" % re.escape(de))
+    partes = formula.split('"')
+    for i in range(0, len(partes), 2):                 # só fora das aspas
+        protegidas: List[str] = []
+
+        def guardar(m):
+            protegidas.append(m.group(0))
+            return "\x00%d\x00" % (len(protegidas) - 1)
+
+        seg = qualificada.sub(guardar, partes[i])
+        seg = padrao.sub(r"\g<1>" + para, seg)
+        for j, ref in enumerate(protegidas):
+            seg = seg.replace("\x00%d\x00" % j, ref)
+        partes[i] = seg
+    return '"'.join(partes)
+
+
+def _coluna_previsao(planilha, painel) -> bool:
+    """
+    Garante a coluna "Previsão" à ESQUERDA de "Mês selecionado" no Painel
+    Mensal (pedido do usuário, 09/08/2026). Layout resultante, que todo o
+    resto do código assume: A=Grupo/Item, B=Previsão, C=Mês selecionado,
+    D=Média mensal, E=Δ, F=% da receita, G=Observação — seletores em C4
+    (mês) e E4 (ano), competência calculada em F4.
+
+    A criação acontece UMA vez (o cabeçalho "Previsão" é a marca): insere a
+    coluna B — o Sheets desloca as colunas e reescreve todas as referências,
+    como numa inserção manual — e replica cada célula de "Mês selecionado"
+    traduzindo as referências internas de C para B (_trocar_coluna). Depois
+    de criada, o sistema NÃO regrava a coluna: ela é do usuário, que pode
+    substituir as réplicas por valores previstos à mão.
+
+    Devolve False quando não reconhece o layout (sem "Grupo / Item", ou a
+    coluna vizinha não é "Previsão" nem "Mês selecionado") — aí validações
+    e ajustador NÃO devem rodar, porque escreveriam nos endereços do layout
+    novo sobre uma planilha em outro formato.
+    """
+    def ler_grade():
+        meta = planilha.fetch_sheet_metadata({
+            "ranges": "'Painel Mensal'!A1:H80",
+            "includeGridData": True,
+            "fields": "sheets(properties(sheetId,title),"
+                      "data(rowData(values(userEnteredValue,formattedValue))))"})
+        folha = next(s for s in meta["sheets"]
+                     if s["properties"]["title"] == "Painel Mensal")
+        return folha["properties"]["sheetId"], folha["data"][0].get("rowData", [])
+
+    sid, grade = ler_grade()
+
+    def celula(r: int, c: int) -> Dict[str, Any]:
+        try:
+            return grade[r]["values"][c] or {}
+        except (IndexError, KeyError):
+            return {}
+
+    def texto(r: int, c: int) -> str:
+        return (celula(r, c).get("formattedValue") or "").strip()
+
+    cab = None
+    for r in range(len(grade)):
+        if texto(r, 0).upper().startswith("GRUPO / ITEM"):
+            cab = r
+            break
+    if cab is None:
+        return False
+    if texto(cab, 1).upper() == "PREVISÃO":
+        return True                                    # já criada
+    if not texto(cab, 1).upper().startswith("MÊS SELECIONADO"):
+        return False                                   # layout desconhecido
+
+    # inheritFromBefore=False: a coluna nova herda formatação da vizinha à
+    # DIREITA (a própria "Mês selecionado") — moeda, negritos e o amarelo do
+    # memo já nascem certos; as mesclas dos títulos de grupo se estendem.
+    planilha.batch_update({"requests": [{"insertDimension": {
+        "range": {"sheetId": sid, "dimension": "COLUMNS",
+                  "startIndex": 1, "endIndex": 2},
+        "inheritFromBefore": False}}]})
+    sid, grade = ler_grade()
+
+    # Réplica da linha 5 para baixo: pula título/nota (1-2), a linha solta
+    # que o usuário mantém na 3 e os seletores da 4. Fórmula é traduzida
+    # C→B e desce no dialeto pt-BR; número e texto vão como estão.
+    escritas: List[Dict[str, Any]] = [
+        {"range": "B%d" % (cab + 1), "values": [["Previsão"]]}]
+    for r in range(4, len(grade)):
+        if r == cab:
+            continue
+        origem = celula(r, 2).get("userEnteredValue") or {}
+        if "formulaValue" in origem:
+            valor: Any = _para_dialeto_pt(
+                _trocar_coluna(origem["formulaValue"], "C", "B"))
+        elif "numberValue" in origem:
+            valor = origem["numberValue"]
+        elif "stringValue" in origem:
+            valor = _texto_seguro(origem["stringValue"])
+        else:
+            continue
+        escritas.append({"range": "B%d" % (r + 1), "values": [[valor]]})
+    painel.batch_update(escritas, value_input_option="USER_ENTERED")
+    _formatar(painel, {"B5:B%d" % max(len(grade), 5): FORMATO_MOEDA})
+    return True
+
+
 def _ajustar_painel_mensal(planilha, painel) -> None:
     """
     Ajustes estruturais do Painel Mensal (decisões do usuário, 09/08/2026):
@@ -473,10 +598,14 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
     pt-BR (_para_dialeto_pt) — ver o comentário daquela função. O passo 1 é
     AUTO-REPARADOR: reescreve as fórmulas dos grupos em toda sincronização,
     então uma fórmula quebrada ali se conserta na rodada seguinte.
+
+    Layout desde a coluna Previsão (09/08/2026, ver _coluna_previsao):
+    valores em C (mês selecionado) e D (média), competência em F4, notas em
+    G. A coluna B (Previsão) é DO USUÁRIO — o ajustador nunca escreve nela.
     """
     def ler_grade():
         meta = planilha.fetch_sheet_metadata({
-            "ranges": "'Painel Mensal'!A1:F80",
+            "ranges": "'Painel Mensal'!A1:G80",
             "includeGridData": True,
             "fields": "sheets(properties(sheetId,title),"
                       "data(rowData(values(userEnteredValue,formattedValue))))"})
@@ -537,15 +666,15 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
             painel.batch_update([
                 {"range": "A%d" % linha,
                  "values": [["Saldo em conta corrente (Santander) — até o mês selecionado"]]},
-                {"range": "B%d" % linha,
+                {"range": "C%d" % linha,
                  "values": [["=SUMIFS('Lançamentos'!$J$4:$J$100000;"
                              "'Lançamentos'!$H$4:$H$100000;\"Conta Santander\";"
-                             "'Lançamentos'!$K$4:$K$100000;\"<=\"&$E$4;"
+                             "'Lançamentos'!$K$4:$K$100000;\"<=\"&$F$4;"
                              "'Lançamentos'!$I$4:$I$100000;\"<>Saldo\")"]]},
-                {"range": "F%d" % linha,
+                {"range": "G%d" % linha,
                  "values": [["memo — compare com o Saldo disponível do app"]]},
             ], value_input_option="USER_ENTERED")
-            _formatar(painel, {"B%d" % linha: FORMATO_MOEDA})
+            _formatar(painel, {"C%d" % linha: FORMATO_MOEDA})
             sid, grade = ler_grade()
 
     # --- 0c. linha "Transferências recebidas" DENTRO do grupo RECEITAS,
@@ -573,18 +702,18 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
             painel.batch_update([
                 {"range": "A%d" % nova_linha,
                  "values": [["    Transferências recebidas (entre contas)"]]},
-                {"range": "B%d" % nova_linha,
+                {"range": "C%d" % nova_linha,
                  "values": [["=SUMIFS('Lançamentos'!$J$4:$J$100000;"
                              "'Lançamentos'!$I$4:$I$100000;\"Transferência\";"
                              "'Lançamentos'!$B$4:$B$100000;\"Extrato\";"
-                             "'Lançamentos'!$K$4:$K$100000;$E$4;"
+                             "'Lançamentos'!$K$4:$K$100000;$F$4;"
                              "'Lançamentos'!$J$4:$J$100000;\">0\")"]]},
-                {"range": "B%d" % subtotal,
-                 "values": [["=SUM($B%d:$B%d)" % (primeira, nova_linha)]]},
                 {"range": "C%d" % subtotal,
                  "values": [["=SUM($C%d:$C%d)" % (primeira, nova_linha)]]},
+                {"range": "D%d" % subtotal,
+                 "values": [["=SUM($D%d:$D%d)" % (primeira, nova_linha)]]},
             ], value_input_option="USER_ENTERED")
-            _formatar(painel, {"B%d" % nova_linha: FORMATO_MOEDA})
+            _formatar(painel, {"C%d" % nova_linha: FORMATO_MOEDA})
             sid, grade = ler_grade()
 
     # --- 0d. linha "Saldo do mês anterior (SANTANDER)" no TOPO do grupo
@@ -612,17 +741,17 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
         painel.batch_update([
             {"range": "A%d" % linha,
              "values": [["    Saldo do mês anterior (SANTANDER)"]]},
-            {"range": "B%d" % linha,
+            {"range": "C%d" % linha,
              "values": [["=SUMIFS('Lançamentos'!$J$4:$J$100000;"
                          "'Lançamentos'!$I$4:$I$100000;\"Saldo\";"
                          "'Lançamentos'!$H$4:$H$100000;\"Conta Santander\";"
                          "'Lançamentos'!$B$4:$B$100000;\"Extrato\";"
-                         "'Lançamentos'!$K$4:$K$100000;$E$4)"]]},
-            {"range": "F%d" % linha,
+                         "'Lançamentos'!$K$4:$K$100000;$F$4)"]]},
+            {"range": "G%d" % linha,
              "values": [["saldo final do mês anterior na Conta Santander "
                          "(o da Nubank já entra em transferências recebidas)"]]},
         ], value_input_option="USER_ENTERED")
-        _formatar(painel, {"B%d" % linha: FORMATO_MOEDA})
+        _formatar(painel, {"C%d" % linha: FORMATO_MOEDA})
         sid, grade = ler_grade()
 
     # garante o Subtotal — RECEITAS cobrindo do primeiro ao último item do
@@ -638,10 +767,10 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
     if r_rec is not None and r_sub_rec is not None and r_sub_rec > r_rec + 1:
         primeira, ultima, subtotal = r_rec + 2, r_sub_rec, r_sub_rec + 1
         painel.batch_update([
-            {"range": "B%d" % subtotal,
-             "values": [["=SUM($B%d:$B%d)" % (primeira, ultima)]]},
             {"range": "C%d" % subtotal,
              "values": [["=SUM($C%d:$C%d)" % (primeira, ultima)]]},
+            {"range": "D%d" % subtotal,
+             "values": [["=SUM($D%d:$D%d)" % (primeira, ultima)]]},
         ], value_input_option="USER_ENTERED")
 
     # --- 0e. destaque amarelo na linha-memo do saldo em conta (decisão do
@@ -649,7 +778,7 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
     r_memo = achar("SALDO EM CONTA CORRENTE")
     if r_memo is not None:
         try:
-            painel.format("A%d:F%d" % (r_memo + 1, r_memo + 1), {
+            painel.format("A%d:G%d" % (r_memo + 1, r_memo + 1), {
                 "backgroundColor": {"red": 1.0, "green": 0.898, "blue": 0.6},
                 "textFormat": {"bold": True,
                                "foregroundColor": {"red": 0.25, "green": 0.17,
@@ -657,7 +786,7 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
         except Exception:
             pass
 
-    # --- 1. critério Extrato nas RECEITAS e nos grupos de despesa (B e C).
+    # --- 1. critério Extrato nas RECEITAS e nos grupos de despesa (C e D).
     # RECEITAS também (decisão do usuário, 09/08/2026): só entradas que
     # passaram pelo extrato — estorno de cartão, por exemplo, já está dentro
     # da fatura. SEMPRE reescreve (auto-reparo): a leitura vem canônica, o
@@ -678,13 +807,13 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
             continue
         if not dentro:
             continue
-        for c in (1, 2):                                # B (mês) e C (média)
+        for c in (2, 3):                                # C (mês) e D (média)
             f = formula(r, c)
             if not f or "SUMIFS(" not in f:
                 continue
             nova = _para_dialeto_pt(_sumifs_com_extrato(f))
             celulas_valores.append({
-                "range": "%s%d" % ("B" if c == 1 else "C", r + 1),
+                "range": "%s%d" % ("C" if c == 2 else "D", r + 1),
                 "values": [[nova]]})
 
     # --- 2. faturas de cartão entram no "Total de despesas" (decisão do
@@ -694,7 +823,7 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
     r_total = achar("TOTAL DE DESPESAS")
     r_faturas = achar("SUBTOTAL — FATURAS")
     if r_total is not None and r_faturas is not None:
-        for c, letra in ((1, "B"), (2, "C")):
+        for c, letra in ((2, "C"), (3, "D")):
             f = formula(r_total, c)
             ref = "$%s$%d" % (letra, r_faturas + 1)
             if f and ref not in f:
@@ -709,11 +838,12 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
 def _validacoes_painel_mensal(planilha, painel) -> None:
     """
     Menus suspensos do Painel Mensal (pedido do usuário, 08/08/2026):
-    B4 = mês (Janeiro..Dezembro) e D4 = ano (2025..2030).
+    C4 = mês (Janeiro..Dezembro) e E4 = ano (2025..2030) — eram B4/D4 até a
+    coluna Previsão deslocar tudo uma coluna à direita (09/08/2026).
 
     A grafia dos meses tem de ser EXATAMENTE a da aba Categorias (R5:R16,
-    capitalizada), porque a competência calculada em E4 usa
-    CORRESP($B$4; Categorias!$R$5:$R$16; 0) — um "janeiro" minúsculo casaria
+    capitalizada), porque a competência calculada em F4 usa
+    CORRESP($C$4; Categorias!$R$5:$R$16; 0) — um "janeiro" minúsculo casaria
     (CORRESP ignora caixa), mas manter a mesma grafia evita depender disso.
 
     Reaplicar a cada sincronização é de propósito: se a validação for
@@ -733,8 +863,8 @@ def _validacoes_painel_mensal(planilha, painel) -> None:
                 "startColumnIndex": coluna, "endColumnIndex": coluna + 1}
 
     planilha.batch_update({"requests": [
-        {"setDataValidation": {"range": intervalo(3, 1), "rule": regra(meses)}},   # B4
-        {"setDataValidation": {"range": intervalo(3, 3), "rule": regra(anos)}},    # D4
+        {"setDataValidation": {"range": intervalo(3, 2), "rule": regra(meses)}},   # C4
+        {"setDataValidation": {"range": intervalo(3, 4), "rule": regra(anos)}},    # E4
     ]})
 
 
