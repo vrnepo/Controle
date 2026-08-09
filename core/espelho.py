@@ -195,6 +195,51 @@ def _texto_seguro(valor: Any) -> str:
     return "'" + texto if texto[:1] in ("=", "+", "-", "@") else texto
 
 
+def _transportes_de_saldo(lanc: List[Dict[str, Any]],
+                          contas_corrente: List[str]) -> List[Dict[str, Any]]:
+    """
+    Linhas de "Saldo inicial" por mês, SÓ PARA A PLANILHA ESPELHO (decisão do
+    usuário, 09/08/2026): filtrando um mês de competência nos Lançamentos, o
+    SUBTOTAL da J2 soma saldo inicial + movimentos = o saldo disponível do app.
+
+    Elas NUNCA entram no banco — todas as análises do sistema (Painel,
+    Conciliação, evolução) continuam vendo só movimentos reais. Na planilha,
+    saem com Tipo = "Saldo", que nenhuma fórmula do Painel Mensal soma; e a
+    célula de saldo total (L2) as exclui explicitamente.
+
+    Uma linha por conta-corrente × mês, a partir do 1º mês com transporte
+    diferente de zero: valor = acumulado de TODOS os meses anteriores.
+    """
+    por_conta: Dict[str, Dict[Any, float]] = {}
+    bancos: Dict[str, str] = {}
+    for r in lanc:
+        if r["conta"] not in contas_corrente:
+            continue
+        meses = por_conta.setdefault(r["conta"], {})
+        meses[r["competencia"]] = meses.get(r["competencia"], 0.0) + float(r["valor"])
+        bancos[r["conta"]] = r["banco"]
+
+    saida: List[Dict[str, Any]] = []
+    for conta, meses in por_conta.items():
+        acumulado = 0.0
+        anterior = None
+        for comp in sorted(meses):
+            if abs(acumulado) > 0.005 and anterior is not None:
+                saida.append({
+                    "banco": bancos[conta], "fonte": "Extrato",
+                    "data": comp,
+                    "descricao": "Saldo inicial da conta (acumulado até %s%s)"
+                                 % (config.mes_curto(anterior.month),
+                                    anterior.strftime("%y")),
+                    "categoria": "Saldo do mês anterior", "subcategoria": "",
+                    "item_fixo": "", "conta": conta, "tipo": "Saldo",
+                    "valor": round(acumulado, 2), "competencia": comp,
+                    "status": "Calculado", "arquivo": "espelho (transporte de saldo)"})
+            acumulado += meses[comp]
+            anterior = comp
+    return saida
+
+
 def sincronizar() -> Dict[str, int]:
     """Reescreve todas as abas do espelho. Devolve as linhas por aba."""
     planilha = _planilha()
@@ -212,25 +257,40 @@ def sincronizar() -> Dict[str, int]:
     TETO_FORMULAS_ANTIGAS = 2177
     lanc = repositorio.listar_lancamentos(limite=5000)
     lanc = list(reversed(lanc))          # ascendente por data, como o original
+    correntes = [c["nome"] for c in repositorio.contas() if c["tipo"] == "conta"]
+    transportes = _transportes_de_saldo(lanc, correntes)
     nota = ("Aba escrita pelo sistema — NÃO editar (a sincronização reescreve). "
-            "Exceção: a célula J2 é SUA — o sistema nunca a toca.")
-    if len(lanc) + 3 > TETO_FORMULAS_ANTIGAS - 50:
+            "Exceção: a célula J2 é SUA — o sistema nunca a toca. Linhas com "
+            "Tipo=Saldo são transporte de saldo, só para leitura filtrada.")
+    total_linhas = len(lanc) + len(transportes) + 3
+    if total_linhas > TETO_FORMULAS_ANTIGAS - 50:
         nota += (" ⚠ ATENÇÃO: %d linhas, chegando perto do teto %d das fórmulas "
                  "do Painel Mensal/Faturas — é preciso ampliar os intervalos delas."
-                 % (len(lanc) + 3, TETO_FORMULAS_ANTIGAS))
+                 % (total_linhas, TETO_FORMULAS_ANTIGAS))
     # J2 é DO USUÁRIO (decisão dele, 08/08/2026): ele mantém ali o
     # =SUBTOTAL(9;J4:J2177) que soma o que o filtro mostra. A primeira versão
     # era escrita pelo sistema em sintaxe de vírgula e quebrou: USER_ENTERED
     # interpreta na LOCALIDADE da planilha, e o pt-BR exige ponto e vírgula.
     # Agora a sincronização nem limpa nem escreve J2: os intervalos de limpeza
     # excluem a célula, e None na matriz faz a API pular a posição.
+    #
+    # K2/L2: saldo total da Conta Santander (exclui as linhas Tipo=Saldo, que
+    # são transporte) — é o número comparável com o "Saldo disponível" do app.
     linha_nota: List[Any] = [nota] + [None] * 12
+    linha_nota[10] = "Saldo em conta (Santander) →"
+    linha_nota[11] = ('=SUMIFS($J$4:$J$100000;$H$4:$H$100000;"Conta Santander";'
+                      '$I$4:$I$100000;"<>Saldo")')
     matriz: List[List[Any]] = [
         ["LANÇAMENTOS"],
         linha_nota,
         ["Banco", "Fonte", "Data", "Descrição", "Categoria", "Subcategoria",
          "Item fixo", "Conta", "Tipo", "Valor", "Competência", "Status", "Arquivo"]]
-    for r in lanc:
+    # transporte de saldo entra ANTES dos movimentos do dia 1 de cada mês —
+    # ordenação por (data, 0=transporte/1=real, ordem original)
+    combinadas = ([(r["data"], 1, i, r) for i, r in enumerate(lanc)] +
+                  [(t["data"], 0, i, t) for i, t in enumerate(transportes)])
+    combinadas.sort(key=lambda x: (x[0], x[1], x[2]))
+    for _, _, _, r in combinadas:
         matriz.append([
             r["banco"], r["fonte"], _dia(r["data"]), _texto_seguro(r["descricao"]),
             r["categoria"] or "", r["subcategoria"] or "", r["item_fixo"] or "",
@@ -242,7 +302,8 @@ def sincronizar() -> Dict[str, int]:
     _escrever(aba_lanc, matriz,
               intervalos_limpeza=["A1:I2", "J1", "K1:M2", "A3:M100000"])
     _formatar(aba_lanc, {"C4:C": FORMATO_DATA, "K4:K": FORMATO_MES,
-                         "J4:J": FORMATO_MOEDA, "J2": FORMATO_MOEDA})
+                         "J4:J": FORMATO_MOEDA, "J2": FORMATO_MOEDA,
+                         "L2": FORMATO_MOEDA})
     # Nota em cada título de coluna (aparece ao passar o mouse): o cabeçalho
     # diz O QUE é; a nota diz o que significa e de onde vem. Pedido do usuário
     # em 08/08/2026. Falha aqui não pode abortar a sincronização.
@@ -254,10 +315,11 @@ def sincronizar() -> Dict[str, int]:
     # filtro herdado; este é recriado limpo a cada sincronização, cobrindo só
     # os dados reais — e é o que o SUBTOTAL de J2 respeita.
     try:
-        aba_lanc.set_basic_filter("A3:M%d" % (len(lanc) + 3))
+        aba_lanc.set_basic_filter("A3:M%d" % (len(combinadas) + 3))
     except Exception:
         pass
     contagem["lancamentos"] = len(lanc)
+    contagem["transportes de saldo"] = len(transportes)
 
     # --- Resumo de Faturas
     resumos = repositorio.resumos()

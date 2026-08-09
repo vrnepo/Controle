@@ -52,6 +52,49 @@ def test_sumifs_sem_lancamentos_fica_como_esta():
     assert _sumifs_com_extrato(f) == f
 
 
+# ------------------------------------------------- transporte de saldo
+
+def _lanc(conta, comp, valor, banco="Santander"):
+    import datetime as dt
+    return {"banco": banco, "fonte": "Extrato", "data": comp,
+            "descricao": "x", "categoria": "", "subcategoria": "",
+            "item_fixo": "", "conta": conta, "tipo": "Despesa",
+            "valor": valor, "competencia": comp, "status": "Confirmado",
+            "arquivo": "t"}
+
+
+def test_transporte_acumula_o_saldo_dos_meses_anteriores():
+    import datetime as dt
+    from core.espelho import _transportes_de_saldo
+    jan, fev, mar = dt.date(2026, 1, 1), dt.date(2026, 2, 1), dt.date(2026, 3, 1)
+    lanc = [_lanc("Conta Santander", jan, -246.32),
+            _lanc("Conta Santander", fev, 784.33),
+            _lanc("Conta Santander", mar, 100.00)]
+    t = _transportes_de_saldo(lanc, ["Conta Santander"])
+    # 1º mês não tem transporte; fev carrega jan; mar carrega jan+fev
+    assert [(x["competencia"], x["valor"]) for x in t] == [
+        (fev, -246.32), (mar, 538.01)]
+    # e as linhas são inertes para as análises: tipo próprio, sem item fixo
+    assert all(x["tipo"] == "Saldo" and x["item_fixo"] == "" for x in t)
+
+
+def test_transporte_ignora_cartoes_e_zero():
+    import datetime as dt
+    from core.espelho import _transportes_de_saldo
+    jan, fev = dt.date(2026, 1, 1), dt.date(2026, 2, 1)
+    lanc = [_lanc("Cartão Santander", jan, -100.0),      # cartão: fora
+            _lanc("Conta Nubank", jan, 50.0, "Nubank"),
+            _lanc("Conta Nubank", fev, -50.0, "Nubank"),
+            _lanc("Conta Santander", jan, 0.0),          # saldo zero: sem linha
+            _lanc("Conta Santander", fev, 10.0)]
+    t = _transportes_de_saldo(lanc, ["Conta Santander", "Conta Nubank"])
+    contas = {(x["conta"], x["competencia"]): x["valor"] for x in t}
+    assert ("Conta Nubank", fev) in contas and contas[("Conta Nubank", fev)] == 50.0
+    # Conta Santander: acumulado até jan é 0 → nenhum transporte
+    assert not any(c == "Conta Santander" for c, _ in contas)
+    assert not any(x["conta"].startswith("Cartão") for x in t)
+
+
 # ------------------------------------------------------- dialeto pt-BR
 
 def test_dialeto_troca_virgula_por_ponto_e_virgula():
