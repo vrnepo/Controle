@@ -739,7 +739,7 @@ MESES_LONGOS = {"JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4, "MAIO": 5,
 _DATA_PRINT = re.compile(
     r"(?:SEGUNDA|TERCA|QUARTA|QUINTA|SEXTA|SABADO|DOMINGO)\s*[-,]?\s*"
     r"(\d{1,2})\s+DE\s+([A-Z]+)")
-_VALOR_PRINT = re.compile(r"(−|-)?\s*R\$\s*([\d.]+,\d{2})")
+_VALOR_PRINT = re.compile(r"([−–—-])?\s*R\$\s*([\d.]+,\d{2})")
 _RUIDO_PRINT = (
     "SALDO DISPONIVEL", "SALDO + LIMITE", "ENTENDA SEU LIMITE",
     "ULTIMA ATUALIZACAO", "ATUALIZAR", "FILTRAR", "COMPROVANTE",
@@ -751,11 +751,14 @@ def extrato_de_print(nome: str, texto: str) -> Leitura:
     Extrato PARCIAL a partir do texto reconhecido num print do app Santander
     (decisão do usuário, 09/08/2026).
 
-    O formato da tela: um cabeçalho com "Saldo disponível", depois blocos por
-    data ("Sexta, 7 de agosto") com as movimentações — título numa linha
-    (ex.: "Pix recebido") e contraparte + valor em seguida. Saída marcada com
-    "-R$"; entrada sem sinal. O ano NÃO aparece na tela: assume-se o ano
-    corrente, recuando um ano se a data cair no futuro.
+    O formato da tela: um cabeçalho com "Saldo disponível" (ou só o total,
+    na tela filtrada), depois blocos por data ("Sexta, 7 de agosto") com as
+    movimentações — título numa linha (ex.: "Pix recebido") e contraparte +
+    valor em seguida. O OCR ora junta contraparte e valor numa linha só, ora
+    os separa em linhas próprias (print de 09/08/2026 à noite) — os dois
+    arranjos são aceitos. Saída marcada com "-R$"; entrada sem sinal. O ano
+    NÃO aparece na tela: assume-se o ano corrente, recuando um ano se a data
+    cair no futuro.
 
     A descrição é composta como "TÍTULO contraparte" de propósito — é a mesma
     forma dos lançamentos que já entraram transcritos à mão ("PIX RECEBIDO
@@ -809,8 +812,17 @@ def extrato_de_print(nome: str, texto: str) -> Leitura:
 
         if any(ruido in n for ruido in _RUIDO_PRINT):
             continue
-        # linha de texto sem valor: é o título da próxima movimentação
-        titulo_pendente = s
+        # Linha de texto sem valor: pedaço da próxima movimentação. ACUMULA
+        # em vez de substituir (09/08/2026): quando o OCR separa contraparte
+        # e valor em linhas próprias, substituir perderia o título
+        # ("Pagamento de boleto" / "Banco santander (brasil)" / "-R$ ...")
+        # e a descrição composta deixaria de casar com as transcritas à mão.
+        # De quebra, emenda contraparte que o OCR parte ao meio ("Municipio"
+        # / "04249873300014"). Lixo acumulado antes do primeiro bloco morre
+        # no reset da linha de data; setas/marcadores soltos são descartados.
+        pedaco = s.strip(" -–—•·>‹›")
+        if pedaco:
+            titulo_pendente = (titulo_pendente + " " + pedaco).strip()
 
     if saldo_do_print is not None:
         r.avisos.append(

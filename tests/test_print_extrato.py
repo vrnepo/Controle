@@ -79,3 +79,76 @@ def test_print_dedup_casa_com_o_que_foi_transcrito_a_mao():
 def test_print_sem_movimentacao_avisa():
     with pytest.raises(parsers.ErroDeLeitura):
         parsers.extrato_de_print("IMG.png", "Saldo disponível\nR$ 10,00\n")
+
+
+# Print de 09/08/2026 à noite (tela filtrada, total no topo): aqui o OCR
+# separou contraparte e valor em LINHAS PRÓPRIAS — o arranjo que o leitor
+# antigo perdia, porque a contraparte sobrescrevia o título.
+TEXTO_PRINT_LINHAS_SEPARADAS = """
+19:53
+R$ 5.154,54
+Filtrar
+Segunda, 10 de agosto
+Pagamento de boleto
+Banco santander (brasil)
+-R$ 6.580,38
+>
+Pagamento de boleto outros bancos
+Almeida fernandes advogad
+-R$ 3.238,25
+Pix enviado
+Telefonica brasil s a
+-R$ 153,47
+Pix enviado
+Claro s a
+-R$ 125,25
+Pix enviado
+Companhia distribuidora d
+-R$ 68,10
+Sexta, 7 de agosto
+Pix recebido
+Vitor alencar farias nepo
+R$ 1.771,72
+Pix recebido
+Vitor a f nepomuceno
+R$ 120,00
+Terça, 4 de agosto
+Liquido de vencimento
+Municipio 04249873300014
+R$ 12.742,33
+"""
+
+
+def test_print_com_contraparte_e_valor_em_linhas_separadas():
+    r = parsers.extrato_de_print("IMG_1953.png", TEXTO_PRINT_LINHAS_SEPARADAS)
+    assert len(r.linhas) == 8
+
+    por_valor = {round(l["valor"], 2): l for l in r.linhas}
+    # título + contraparte compostos mesmo vindo em linhas próprias
+    assert por_valor[-6580.38]["descricao"] == (
+        "Pagamento de boleto Banco santander (brasil)")
+    assert por_valor[-6580.38]["data"] == dt.date(2026, 8, 10)
+    assert por_valor[-3238.25]["descricao"] == (
+        "Pagamento de boleto outros bancos Almeida fernandes advogad")
+    assert por_valor[-153.47]["descricao"] == "Pix enviado Telefonica brasil s a"
+    assert por_valor[1771.72]["data"] == dt.date(2026, 8, 7)
+    assert por_valor[12742.33]["descricao"] == (
+        "Liquido de vencimento Municipio 04249873300014")
+    # o total do topo (tela filtrada) vira aviso, nunca lançamento
+    assert not any(round(l["valor"], 2) == 5154.54 for l in r.linhas)
+    assert any("5154.54" in a or "5.154,54" in a for a in r.avisos), r.avisos
+
+
+def test_print_emenda_contraparte_partida_pelo_ocr():
+    """O OCR às vezes quebra a contraparte em duas linhas ("Municipio" /
+    "04249873300014") — a acumulação tem de emendar, senão a descrição não
+    normaliza igual à transcrita à mão e a deduplicação falha."""
+    texto = ("Terça, 4 de agosto\n"
+             "Liquido de vencimento\n"
+             "Municipio\n"
+             "04249873300014\n"
+             "R$ 12.742,33\n")
+    r = parsers.extrato_de_print("IMG.png", texto)
+    assert len(r.linhas) == 1
+    assert r.linhas[0]["descricao"] == (
+        "Liquido de vencimento Municipio 04249873300014")
