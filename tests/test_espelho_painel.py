@@ -7,7 +7,7 @@ As fórmulas dos testes são as REAIS da planilha, na forma canônica da API.
 from __future__ import annotations
 
 from core.espelho import (_formula_pagamento, _para_dialeto_pt,
-                          _sumifs_com_extrato, _trocar_coluna)
+                          _sumifs_com_extrato, _valor_congelado)
 
 CRITERIO = ",'Lançamentos'!$B$4:$B$2177,\"Extrato\""
 
@@ -53,36 +53,33 @@ def test_sumifs_sem_lancamentos_fica_como_esta():
     assert _sumifs_com_extrato(f) == f
 
 
-# --------------------------------------------- réplica da coluna Previsão
+# ---------------------------------------- congelamento da coluna Previsão
 
-def test_troca_o_subtotal_para_a_propria_coluna():
-    """A réplica em B tem de somar a si mesma, não a coluna de origem."""
-    assert _trocar_coluna("=SUM($C7:$C15)", "C", "B") == "=SUM($B7:$B15)"
-
-
-def test_troca_referencias_relativas_e_mistas():
-    assert _trocar_coluna("=C6-C7+$C$24", "C", "B") == "=B6-B7+$B$24"
+def test_congela_formula_no_valor_calculado_arredondado():
+    """A fórmula vira o número calculado, sem poeira binária de float."""
+    c = {"userEnteredValue": {"formulaValue": "=SUM($B7:$B15)"},
+         "effectiveValue": {"numberValue": -180.00000000000003}}
+    assert _valor_congelado(c) == -180.0
 
 
-def test_nao_troca_referencia_qualificada_de_outra_aba():
-    f = "=SUMIFS(Faturas!$C$4:$C$27,Faturas!C4,$F$4)"
-    assert _trocar_coluna(f, "C", "B") == f
+def test_congela_formula_vazia_em_celula_vazia():
+    """Linha de pagamento sem pagamento: IFERROR devolvia "" — congela
+    como célula vazia, pronta para o preenchimento manual."""
+    c = {"userEnteredValue": {"formulaValue": '=IFERROR(INDEX(...),"")'}}
+    assert _valor_congelado(c) == ""
 
 
-def test_nao_troca_dentro_de_aspas_nem_nome_de_funcao():
-    """O C de COUNTIFS não é referência (sem dígito depois) e "C7" entre
-    aspas é texto — só o C7 solto no fim pode virar B7."""
-    f = '=IF(COUNTIFS(Faturas!$A$4:$A$27,"<="&$F$4),"C7 no texto",C7)'
-    assert _trocar_coluna(f, "C", "B") == (
-        '=IF(COUNTIFS(Faturas!$A$4:$A$27,"<="&$F$4),"C7 no texto",B7)')
+def test_nao_toca_celula_sem_formula():
+    """None = pular a célula: o que o usuário digitou fica como está."""
+    assert _valor_congelado({"userEnteredValue": {"numberValue": 100.0}}) is None
+    assert _valor_congelado({"userEnteredValue": {"stringValue": "meta"}}) is None
+    assert _valor_congelado({}) is None
 
 
-def test_formula_real_dos_grupos_fica_intacta():
-    """As SUMIFS dos grupos só referenciam Lançamentos e $F$4 — a réplica
-    delas é idêntica à origem."""
-    f = ("=SUMIFS('Lançamentos'!$J$4:$J$2177,'Lançamentos'!$G$4:$G$2177,"
-         "\"Cozinheira\",'Lançamentos'!$K$4:$K$2177,$F$4)")
-    assert _trocar_coluna(f, "C", "B") == f
+def test_congela_texto_com_protecao_anti_formula():
+    c = {"userEnteredValue": {"formulaValue": "=A1"},
+         "effectiveValue": {"stringValue": "=CMD"}}
+    assert _valor_congelado(c) == "'=CMD"
 
 
 # ------------------------------------------- pagamentos individualizados

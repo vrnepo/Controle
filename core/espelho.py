@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import re
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -465,38 +464,24 @@ def _para_dialeto_pt(formula: str) -> str:
     return "".join(saida)
 
 
-def _trocar_coluna(formula: str, de: str, para: str) -> str:
+def _valor_congelado(celula: Dict[str, Any]) -> Optional[Any]:
     """
-    Troca as referências à coluna `de` pela coluna `para` numa fórmula
-    CANÔNICA — só as referências à própria aba: "Faturas!C4" e o texto entre
-    aspas ficam intactos. É o que torna a coluna Previsão uma réplica
-    autossuficiente da "Mês selecionado" (09/08/2026): =SUM($C7:$C15) vira
-    =SUM($B7:$B15) — o subtotal da Previsão soma a própria Previsão —
-    enquanto 'Lançamentos'!$J$4 e $F$4 não mudam.
-
-    As referências qualificadas são protegidas por INTEIRO antes da troca,
-    inclusive intervalos: em "Faturas!$C$4:$C$27" o "$C$27" vem depois do
-    ":" sem qualificador colado nele — sem a proteção, só a primeira metade
-    escaparia. O padrão da troca exige dígito depois da coluna (não casa o
-    C de COUNTIFS) e proíbe letra, dígito, "!", "." ou "$" logo antes.
+    Valor estático que substitui a fórmula de uma célula da Previsão no
+    congelamento (pedido do usuário, 09/08/2026): None quando a célula NÃO
+    tem fórmula (conteúdo digitado pelo usuário fica intacto); "" quando a
+    fórmula resultou vazia (linha de pagamento sem pagamento); senão o
+    número (arredondado a centavos — o cálculo pode trazer poeira binária)
+    ou o texto calculado, protegido contra virar fórmula.
     """
-    qualificada = re.compile(
-        r"(?:'[^']*'|[A-Za-z0-9_.]+)!\$?[A-Z]{1,3}\$?\d*(?::\$?[A-Z]{1,3}\$?\d*)?")
-    padrao = re.compile(r"(?<![A-Za-z0-9_.!$])(\$?)%s(?=\$?\d)" % re.escape(de))
-    partes = formula.split('"')
-    for i in range(0, len(partes), 2):                 # só fora das aspas
-        protegidas: List[str] = []
-
-        def guardar(m):
-            protegidas.append(m.group(0))
-            return "\x00%d\x00" % (len(protegidas) - 1)
-
-        seg = qualificada.sub(guardar, partes[i])
-        seg = padrao.sub(r"\g<1>" + para, seg)
-        for j, ref in enumerate(protegidas):
-            seg = seg.replace("\x00%d\x00" % j, ref)
-        partes[i] = seg
-    return '"'.join(partes)
+    uev = celula.get("userEnteredValue") or {}
+    if "formulaValue" not in uev:
+        return None
+    efetivo = celula.get("effectiveValue") or {}
+    if "numberValue" in efetivo:
+        return round(float(efetivo["numberValue"]), 2)
+    if "stringValue" in efetivo:
+        return _texto_seguro(efetivo["stringValue"])
+    return ""
 
 
 # Itens do Painel Mensal exibidos POR PAGAMENTO, não pelo total do mês
@@ -520,37 +505,48 @@ def _formula_pagamento(item: str, n: int) -> str:
             "('Lançamentos'!$B$4:$B$2177=\"Extrato\")),%d),\"\")" % (item, n))
 
 
+NOTA_PREVISAO = (
+    "Coluna LIVRE do usuário: preencha e simule projeções à vontade — o "
+    "sistema não escreve aqui. Nasceu em 09/08/2026 como réplica em fórmula "
+    "da coluna Mês selecionado e foi congelada nos valores daquele momento "
+    "no mesmo dia, a pedido. NÃO apague esta nota: ela é a marca de que o "
+    "congelamento já rodou — sem ela, a próxima sincronização congelaria "
+    "de novo qualquer fórmula que você tenha digitado na coluna.")
+
+
 def _coluna_previsao(planilha, painel) -> bool:
     """
-    Garante a coluna "Previsão" à ESQUERDA de "Mês selecionado" no Painel
-    Mensal (pedido do usuário, 09/08/2026). Layout resultante, que todo o
-    resto do código assume: A=Grupo/Item, B=Previsão, C=Mês selecionado,
-    D=Média mensal, E=Δ, F=% da receita, G=Observação — seletores em C4
-    (mês) e E4 (ano), competência calculada em F4.
+    Portão de layout do Painel Mensal + congelamento único da Previsão.
 
-    A criação acontece UMA vez (o cabeçalho "Previsão" é a marca): insere a
-    coluna B — o Sheets desloca as colunas e reescreve todas as referências,
-    como numa inserção manual — e replica cada célula de "Mês selecionado"
-    traduzindo as referências internas de C para B (_trocar_coluna). Depois
-    de criada, o sistema NÃO regrava a coluna: ela é do usuário, que pode
-    substituir as réplicas por valores previstos à mão.
+    A coluna B (Previsão) é de LIVRE PREENCHIMENTO (decisão do usuário,
+    09/08/2026, no mesmo dia da criação): o sistema NÃO escreve nela — nem
+    a recria se sumir. Layout que todo o resto do código assume:
+    A=Grupo/Item, B=Previsão, C=Mês selecionado, D=Média mensal, E=Δ,
+    F=% da receita, G=Observação — seletores em C4 (mês) e E4 (ano),
+    competência calculada em F4.
 
-    Devolve False quando não reconhece o layout (sem "Grupo / Item", ou a
-    coluna vizinha não é "Previsão" nem "Mês selecionado") — aí validações
-    e ajustador NÃO devem rodar, porque escreveriam nos endereços do layout
-    novo sobre uma planilha em outro formato.
+    História: a coluna nasceu como réplica em fórmula da "Mês selecionado"
+    (commit a9844ae) — mas fórmula acompanha o mês selecionado e os
+    Lançamentos re-espelhados, e o usuário quer a coluna parada para
+    simular projeções. O congelamento troca cada fórmula da coluna pelo
+    valor calculado no momento (linha vazia fica vazia), roda UMA vez e
+    deixa a NOTA_PREVISAO no cabeçalho como marca de já-rodou. Células sem
+    fórmula (digitadas pelo usuário) nunca são tocadas.
+
+    Devolve False quando não reconhece o layout (sem "Grupo / Item" ou sem
+    o cabeçalho "Previsão") — aí validações e ajustador NÃO devem rodar,
+    porque escreveriam nos endereços do layout novo sobre uma planilha em
+    outro formato.
     """
-    def ler_grade():
-        meta = planilha.fetch_sheet_metadata({
-            "ranges": "'Painel Mensal'!A1:H80",
-            "includeGridData": True,
-            "fields": "sheets(properties(sheetId,title),"
-                      "data(rowData(values(userEnteredValue,formattedValue))))"})
-        folha = next(s for s in meta["sheets"]
-                     if s["properties"]["title"] == "Painel Mensal")
-        return folha["properties"]["sheetId"], folha["data"][0].get("rowData", [])
-
-    sid, grade = ler_grade()
+    meta = planilha.fetch_sheet_metadata({
+        "ranges": "'Painel Mensal'!A1:H80",
+        "includeGridData": True,
+        "fields": "sheets(properties(sheetId,title),"
+                  "data(rowData(values(userEnteredValue,effectiveValue,"
+                  "formattedValue,note))))"})
+    folha = next(s for s in meta["sheets"]
+                 if s["properties"]["title"] == "Painel Mensal")
+    grade = folha["data"][0].get("rowData", [])
 
     def celula(r: int, c: int) -> Dict[str, Any]:
         try:
@@ -566,43 +562,24 @@ def _coluna_previsao(planilha, painel) -> bool:
         if texto(r, 0).upper().startswith("GRUPO / ITEM"):
             cab = r
             break
-    if cab is None:
-        return False
-    if texto(cab, 1).upper() == "PREVISÃO":
-        return True                                    # já criada
-    if not texto(cab, 1).upper().startswith("MÊS SELECIONADO"):
+    if cab is None or texto(cab, 1).upper() != "PREVISÃO":
         return False                                   # layout desconhecido
+    if celula(cab, 1).get("note"):
+        return True                                    # já congelada
 
-    # inheritFromBefore=False: a coluna nova herda formatação da vizinha à
-    # DIREITA (a própria "Mês selecionado") — moeda, negritos e o amarelo do
-    # memo já nascem certos; as mesclas dos títulos de grupo se estendem.
-    planilha.batch_update({"requests": [{"insertDimension": {
-        "range": {"sheetId": sid, "dimension": "COLUMNS",
-                  "startIndex": 1, "endIndex": 2},
-        "inheritFromBefore": False}}]})
-    sid, grade = ler_grade()
-
-    # Réplica da linha 5 para baixo: pula título/nota (1-2), a linha solta
-    # que o usuário mantém na 3 e os seletores da 4. Fórmula é traduzida
-    # C→B e desce no dialeto pt-BR; número e texto vão como estão.
-    escritas: List[Dict[str, Any]] = [
-        {"range": "B%d" % (cab + 1), "values": [["Previsão"]]}]
-    for r in range(4, len(grade)):
+    escritas: List[Dict[str, Any]] = []
+    for r in range(4, len(grade)):                     # da linha 5 para baixo
         if r == cab:
             continue
-        origem = celula(r, 2).get("userEnteredValue") or {}
-        if "formulaValue" in origem:
-            valor: Any = _para_dialeto_pt(
-                _trocar_coluna(origem["formulaValue"], "C", "B"))
-        elif "numberValue" in origem:
-            valor = origem["numberValue"]
-        elif "stringValue" in origem:
-            valor = _texto_seguro(origem["stringValue"])
-        else:
-            continue
-        escritas.append({"range": "B%d" % (r + 1), "values": [[valor]]})
-    painel.batch_update(escritas, value_input_option="USER_ENTERED")
-    _formatar(painel, {"B5:B%d" % max(len(grade), 5): FORMATO_MOEDA})
+        valor = _valor_congelado(celula(r, 1))
+        if valor is not None:
+            escritas.append({"range": "B%d" % (r + 1), "values": [[valor]]})
+    if escritas:
+        painel.batch_update(escritas, value_input_option="USER_ENTERED")
+    # A nota é a marca FUNCIONAL do congelamento — se a gravação falhar, a
+    # exceção sobe e a rodada seguinte reexecuta (aí sem fórmulas restando,
+    # só a nota é regravada).
+    painel.insert_notes({"B%d" % (cab + 1): NOTA_PREVISAO})
     return True
 
 
@@ -820,9 +797,8 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
     # linhas novas ACIMA da linha-total — dentro do grupo, para o SUM do
     # Subtotal — APARTAMENTO expandir sozinho — e regrava a linha original
     # como o último pagamento. Média/Δ/% dessas linhas são apagadas (média
-    # de um pagamento avulso não significa nada); a Previsão (B) recebe a
-    # réplica UMA vez na migração — a linha-total dela ficaria órfã com a
-    # mudança de sentido da linha — e depois volta a ser só do usuário.
+    # de um pagamento avulso não significa nada); a Previsão (B) NÃO é
+    # escrita — coluna livre do usuário (decisão de 09/08/2026).
     # Nas rodadas seguintes, só a fórmula de C é regravada (auto-reparo).
     for item, vagas in ITENS_POR_PAGAMENTO:
         if achar("%s — PAGAMENTO" % item.upper()) is None:
@@ -844,13 +820,12 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
                 escritas += [
                     {"range": "A%d" % linha,
                      "values": [["    %s — pagamento %d" % (item, n)]]},
-                    {"range": "B%d" % linha, "values": [[fpt]]},
                     {"range": "C%d" % linha, "values": [[fpt]]},
                     {"range": "D%d:F%d" % (linha, linha),
                      "values": [["", "", ""]]},
                 ]
             painel.batch_update(escritas, value_input_option="USER_ENTERED")
-            _formatar(painel, {"B%d:C%d" % (r_item + 1, r_item + vagas):
+            _formatar(painel, {"C%d:C%d" % (r_item + 1, r_item + vagas):
                                FORMATO_MOEDA})
             sid, grade = ler_grade()
         else:
