@@ -602,6 +602,80 @@ def _pdf_nubank_fatura(nome: str, texto: str) -> Leitura:
         raise ErroDeLeitura(
             "Não achei lançamentos no PDF da fatura. O app do Nubank exporta a "
             "fatura em CSV — prefira o CSV, que é exato.")
+
+    # RESUMO DA FATURA ATUAL (decisão do usuário, 08/08/2026): a soma dos
+    # lançamentos da fatura Nubank deve ser o "Total a pagar". A "Fatura
+    # anterior" pode ser NEGATIVA (crédito — jul/26 veio com −258,01), e o
+    # próprio Nubank arredonda o total (jul/26: componentes somam 3.260,97 e
+    # o app mostra 3.260,98) — por isso a linha de ajuste ao final.
+    #
+    # A busca é RECORTADA à seção do quadro e ancorada no início da linha: a
+    # 1ª versão varria o documento inteiro, casava "Total a pagar" de outras
+    # partes do PDF e fabricava ajustes de centenas de reais (dry-run de
+    # 08/08/2026). O fim da seção varia por mês: nos meses de rotativo não
+    # existe a linha "Pagamento mínimo" — por isso a lista de terminadores.
+    inicio = texto.upper().find("RESUMO DA FATURA")
+    secao = ""
+    if inicio >= 0:
+        fim = len(texto)
+        for terminador in ("Pagamento mínimo", "O Nubank declara", "PRÓXIMAS FATURAS"):
+            achado = texto.find(terminador, inicio)
+            if achado > 0:
+                fim = min(fim, achado)
+        secao = texto[inicio:fim]
+
+    def campo(rotulo: str) -> Optional[float]:
+        m = re.search(r"^" + rotulo + r"[^\n]*?(−?-?\s?R\$\s?[\d.]+,\d{2})\s*$",
+                      secao, re.M)
+        return num_br(m.group(1)) if m else None
+
+    saldo = campo(r"Fatura anterior")
+    total_a_pagar = campo(r"Total a pagar")
+    if saldo is not None and total_a_pagar is not None:
+        compras = campo(r"Total de compras de todos os cart.es") or 0.0
+        iof = campo(r"IOF de compras internacionais") or 0.0
+        outros = campo(r"Outros lan.amentos") or 0.0
+        pagamentos = abs(campo(r"Pagamento recebido") or 0.0)   # o PDF o mostra negativo
+        # Meses de rotativo trazem linhas extras no quadro; elas correspondem
+        # a lançamentos reais da fatura (Juros/IOF de rotativo, Estorno de
+        # juros) e entram nos ENCARGOS do resumo, senão a conciliação veria
+        # o "novo" menor do que os itens somam. "Saldo financiado" é
+        # intermediário (saldo − pagamento) e fica de fora de propósito.
+        juros_fin = campo(r"Juros de financiamento") or 0.0
+        iof_fin = campo(r"IOF de financiamento") or 0.0
+        estorno_juros = campo(r"Estorno de juros") or 0.0      # vem negativo
+        r.resumos.append({
+            "conta": "Cartão Nubank", "competencia": comp,
+            "saldo_anterior": saldo,
+            "despesas": compras + outros,    # "Outros" (estornos etc.) abate aqui
+            "encargos": iof + juros_fin + iof_fin + estorno_juros,
+            "creditos": 0.0,
+            "pagamentos": pagamentos, "total_informado": total_a_pagar,
+            "arquivo": nome})
+        if abs(saldo) > 0.005:
+            r.linhas.append({"data": comp, "descricao": "Saldo anterior da fatura",
+                             "valor": -saldo, "conta": "Cartão Nubank",
+                             "competencia": comp, "arquivo": nome})
+        if pagamentos > 0.005:
+            r.linhas.append({"data": comp,
+                             "descricao": "Pagamentos recebidos na fatura",
+                             "valor": pagamentos, "conta": "Cartão Nubank",
+                             "competencia": comp, "arquivo": nome})
+        # Trava final: a soma TEM de ser o Total a pagar. Diferença de até 5
+        # centavos é arredondamento do próprio Nubank e vira a linha de
+        # ajuste; acima disso é item faltando ou leitura errada — aí NÃO se
+        # fabrica ajuste: fica o aviso, e a Conciliação aponta o buraco.
+        diferenca = round(-total_a_pagar - sum(l["valor"] for l in r.linhas), 2)
+        if 0.005 < abs(diferenca) <= 0.05:
+            r.linhas.append({"data": comp,
+                             "descricao": "Ajuste de arredondamento da fatura",
+                             "valor": diferenca, "conta": "Cartão Nubank",
+                             "competencia": comp, "arquivo": nome})
+        elif abs(diferenca) > 0.05:
+            r.avisos.append(
+                "A soma dos lançamentos difere do Total a pagar em %s — item "
+                "faltando ou leitura errada; nenhum ajuste foi inventado."
+                % diferenca)
     return r
 
 

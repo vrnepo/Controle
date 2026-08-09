@@ -214,6 +214,46 @@ def test_pdf_nubank_remove_prefixo_do_cartao():
     assert linhas[0]["descricao"] == "Mercadolivre*Mercadol - Parcela 4/10"
 
 
+def test_pdf_nubank_soma_o_total_a_pagar():
+    """
+    Decisão do usuário (08/08/2026): a fatura Nubank soma o "Total a pagar".
+    Este é o quadro REAL de jul/26 — fatura anterior NEGATIVA (crédito) e o
+    arredondamento de 1 centavo do próprio Nubank (componentes somam 3.260,97
+    e o app mostra 3.260,98).
+    """
+    texto = "\n".join([
+        "10 JUN •••• 3450 Compra Exemplo R$ 3.560,73",
+        "27 JUN IOF de compra internacional R$ 7,75",
+        '10 JUN Estorno de "Amazonmktplc*Stbcomerc" −R$ 78,50',
+        "17 JUN Nubank+ R$ 29,00",
+        "RESUMO DA FATURA ATUAL",
+        "Fatura anterior −R$ 258,01",
+        "Pagamento recebido R$ 0,00",
+        "Total de compras de todos os cartões, 10 JUN a 10 JUL R$ 3.560,73",
+        "IOF de compras internacionais R$ 7,75",
+        "Outros lançamentos −R$ 49,50",
+        "Total a pagar R$ 3.260,98",
+        "Pagamento mínimo para não ficar em atraso R$ 269,84",
+    ])
+    r = parsers._pdf_nubank_fatura("Nubank_2026-07-17.pdf", texto)
+
+    # o resumo foi extraído e fecha com o app
+    assert len(r.resumos) == 1
+    s = r.resumos[0]
+    assert s["saldo_anterior"] == -258.01 and s["total_informado"] == 3260.98
+    assert abs(s["despesas"] - 3511.23) < 0.005          # compras + outros
+    # itens: −3.560,73 −7,75 +78,50 −29,00 = −3.518,98 (o gasto do mês);
+    # com a fatura anterior credora (+258,01) e o centavo, fecha no total
+    soma = sum(l["valor"] for l in r.linhas)
+    assert abs(soma + 3260.98) < 0.005, soma
+    # fatura anterior credora vira lançamento POSITIVO
+    saldo = [l for l in r.linhas if l["descricao"] == "Saldo anterior da fatura"][0]
+    assert saldo["valor"] == 258.01
+    # e o centavo do Nubank está explícito, não escondido
+    ajuste = [l for l in r.linhas if "arredondamento" in l["descricao"]]
+    assert ajuste and abs(ajuste[0]["valor"] + 0.01) < 0.005
+
+
 # -------------------------------------------- fatura Santander de verdade
 
 @pytest.mark.skipif(not SENHA, reason="SENHA_PDF_SANTANDER não configurada")
