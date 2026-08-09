@@ -499,6 +499,27 @@ def _trocar_coluna(formula: str, de: str, para: str) -> str:
     return '"'.join(partes)
 
 
+# Itens do Painel Mensal exibidos POR PAGAMENTO, não pelo total do mês
+# (pedido do usuário, 09/08/2026): (item fixo, quantidade de linhas fixas).
+# O n-º pagamento do mês aparece na n-ª linha; sem pagamento, linha em branco.
+ITENS_POR_PAGAMENTO = (("Cozinheira", 5), ("Diarista", 3))
+
+
+def _formula_pagamento(item: str, n: int) -> str:
+    """
+    Fórmula CANÔNICA do n-º pagamento do item fixo no mês selecionado.
+    FILTER devolve os pagamentos do mês na ordem dos Lançamentos (ascendente
+    por data → o 1º é o mais antigo); INDEX pega o n-º; IFERROR deixa a
+    linha em branco quando o mês teve menos pagamentos que isso. Os mesmos
+    critérios dos SUMIFS dos grupos: item fixo (G), competência (K = $F$4)
+    e Fonte = Extrato (B) — pagamento é saída de conta, não de cartão.
+    """
+    return ("=IFERROR(INDEX(FILTER('Lançamentos'!$J$4:$J$2177,"
+            "('Lançamentos'!$G$4:$G$2177=\"%s\")*"
+            "('Lançamentos'!$K$4:$K$2177=$F$4)*"
+            "('Lançamentos'!$B$4:$B$2177=\"Extrato\")),%d),\"\")" % (item, n))
+
+
 def _coluna_previsao(planilha, painel) -> bool:
     """
     Garante a coluna "Previsão" à ESQUERDA de "Mês selecionado" no Painel
@@ -592,7 +613,9 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
        _sumifs_com_extrato);
     2. o bloco RESULTADO DO MÊS sobe para logo abaixo dos seletores (linha 5),
        acima do cabeçalho da tabela — via moveDimension, que reescreve as
-       referências como um arrasto manual faria.
+       referências como um arrasto manual faria;
+    3. Cozinheira e Diarista aparecem POR PAGAMENTO, em linhas fixas
+       (fase 0f, ITENS_POR_PAGAMENTO), não mais numa linha com o total.
 
     Leitura por gridData (canônica) e escrita por USER_ENTERED no dialeto
     pt-BR (_para_dialeto_pt) — ver o comentário daquela função. O passo 1 é
@@ -786,13 +809,67 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
         except Exception:
             pass
 
+    # As escritas de valor das fases 0f, 1 e 2 saem numa chamada só no fim.
+    celulas_valores: List[Dict[str, Any]] = []
+
+    # --- 0f. Cozinheira e Diarista POR PAGAMENTO (pedido do usuário,
+    # 09/08/2026): em vez de uma linha com o total do mês, N linhas fixas —
+    # o n-º pagamento do mês selecionado aparece na n-ª linha e as sobras
+    # ficam em branco (ver _formula_pagamento e ITENS_POR_PAGAMENTO).
+    # A migração roda UMA vez (o rótulo "— pagamento" é a marca): insere as
+    # linhas novas ACIMA da linha-total — dentro do grupo, para o SUM do
+    # Subtotal — APARTAMENTO expandir sozinho — e regrava a linha original
+    # como o último pagamento. Média/Δ/% dessas linhas são apagadas (média
+    # de um pagamento avulso não significa nada); a Previsão (B) recebe a
+    # réplica UMA vez na migração — a linha-total dela ficaria órfã com a
+    # mudança de sentido da linha — e depois volta a ser só do usuário.
+    # Nas rodadas seguintes, só a fórmula de C é regravada (auto-reparo).
+    for item, vagas in ITENS_POR_PAGAMENTO:
+        if achar("%s — PAGAMENTO" % item.upper()) is None:
+            r_item = None
+            for r in range(len(grade)):
+                if texto_a(r).upper() == item.upper():
+                    r_item = r
+                    break
+            if r_item is None:
+                continue
+            planilha.batch_update({"requests": [{"insertDimension": {
+                "range": {"sheetId": sid, "dimension": "ROWS",
+                          "startIndex": r_item, "endIndex": r_item + vagas - 1},
+                "inheritFromBefore": True}}]})
+            escritas: List[Dict[str, Any]] = []
+            for n in range(1, vagas + 1):
+                linha = r_item + n                     # 1-based na planilha
+                fpt = _para_dialeto_pt(_formula_pagamento(item, n))
+                escritas += [
+                    {"range": "A%d" % linha,
+                     "values": [["    %s — pagamento %d" % (item, n)]]},
+                    {"range": "B%d" % linha, "values": [[fpt]]},
+                    {"range": "C%d" % linha, "values": [[fpt]]},
+                    {"range": "D%d:F%d" % (linha, linha),
+                     "values": [["", "", ""]]},
+                ]
+            painel.batch_update(escritas, value_input_option="USER_ENTERED")
+            _formatar(painel, {"B%d:C%d" % (r_item + 1, r_item + vagas):
+                               FORMATO_MOEDA})
+            sid, grade = ler_grade()
+        else:
+            for n in range(1, vagas + 1):
+                alvo = ("%s — PAGAMENTO %d" % (item, n)).upper()
+                for r in range(len(grade)):
+                    if texto_a(r).upper() == alvo:
+                        celulas_valores.append({
+                            "range": "C%d" % (r + 1),
+                            "values": [[_para_dialeto_pt(
+                                _formula_pagamento(item, n))]]})
+                        break
+
     # --- 1. critério Extrato nas RECEITAS e nos grupos de despesa (C e D).
     # RECEITAS também (decisão do usuário, 09/08/2026): só entradas que
     # passaram pelo extrato — estorno de cartão, por exemplo, já está dentro
     # da fatura. SEMPRE reescreve (auto-reparo): a leitura vem canônica, o
     # critério é garantido e a fórmula desce no dialeto pt-BR.
     GRUPOS = ("RECEITAS", "APARTAMENTO", "FLAT", "PESSOAIS FIXAS", "DESPESAS VARI")
-    celulas_valores: List[Dict[str, Any]] = []
     dentro = False
     for r in range(len(grade)):
         rotulo = texto_a(r).upper()

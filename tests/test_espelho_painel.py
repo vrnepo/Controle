@@ -6,7 +6,8 @@ As fórmulas dos testes são as REAIS da planilha, na forma canônica da API.
 
 from __future__ import annotations
 
-from core.espelho import _para_dialeto_pt, _sumifs_com_extrato, _trocar_coluna
+from core.espelho import (_formula_pagamento, _para_dialeto_pt,
+                          _sumifs_com_extrato, _trocar_coluna)
 
 CRITERIO = ",'Lançamentos'!$B$4:$B$2177,\"Extrato\""
 
@@ -82,6 +83,27 @@ def test_formula_real_dos_grupos_fica_intacta():
     f = ("=SUMIFS('Lançamentos'!$J$4:$J$2177,'Lançamentos'!$G$4:$G$2177,"
          "\"Cozinheira\",'Lançamentos'!$K$4:$K$2177,$F$4)")
     assert _trocar_coluna(f, "C", "B") == f
+
+
+# ------------------------------------------- pagamentos individualizados
+
+def test_formula_do_pagamento_n_no_dialeto():
+    """Linha do n-º pagamento (Cozinheira/Diarista): FILTER pega os
+    pagamentos do mês, INDEX o n-º, IFERROR deixa em branco quando o mês
+    teve menos pagamentos — tudo no dialeto pt-BR ao descer."""
+    f = _para_dialeto_pt(_formula_pagamento("Cozinheira", 3))
+    assert f.startswith("=IFERROR(INDEX(FILTER('Lançamentos'!$J$4:$J$2177;")
+    assert "'Lançamentos'!$G$4:$G$2177=\"Cozinheira\"" in f
+    assert "'Lançamentos'!$K$4:$K$2177=$F$4" in f
+    assert "'Lançamentos'!$B$4:$B$2177=\"Extrato\"" in f
+    assert f.endswith(";3);\"\")")
+    assert "," not in f
+
+
+def test_formula_do_pagamento_sem_sumifs_escapa_do_auto_reparo():
+    """A fase 1 do ajustador só regrava fórmulas com SUMIFS — as linhas de
+    pagamento não podem ser capturadas por ela."""
+    assert "SUMIFS(" not in _formula_pagamento("Diarista", 1)
 
 
 # ------------------------------------------------- transporte de saldo
