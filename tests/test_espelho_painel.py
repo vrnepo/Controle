@@ -6,7 +6,7 @@ As fórmulas dos testes são as REAIS da planilha, na forma canônica da API.
 
 from __future__ import annotations
 
-from core.espelho import _sumifs_com_extrato
+from core.espelho import _para_dialeto_pt, _sumifs_com_extrato
 
 CRITERIO = ",'Lançamentos'!$B$4:$B$2177,\"Extrato\""
 
@@ -50,3 +50,29 @@ def test_idempotente():
 def test_sumifs_sem_lancamentos_fica_como_esta():
     f = "=SUMIFS(Faturas!$D$4:$D$27,Faturas!$A$4:$A$27,$E$4)"
     assert _sumifs_com_extrato(f) == f
+
+
+# ------------------------------------------------------- dialeto pt-BR
+
+def test_dialeto_troca_virgula_por_ponto_e_virgula():
+    """A API lê fórmulas em forma canônica (vírgulas) mas TODA escrita é
+    interpretada na localidade da planilha — gravar vírgula no pt-BR foi o
+    que encheu o Painel Mensal de #ERROR! em 09/08/2026."""
+    f = "=SUMIFS('Lançamentos'!$J$4:$J$2177,'Lançamentos'!$K$4:$K$2177,$E$4)"
+    assert _para_dialeto_pt(f) == (
+        "=SUMIFS('Lançamentos'!$J$4:$J$2177;'Lançamentos'!$K$4:$K$2177;$E$4)")
+
+
+def test_dialeto_preserva_virgula_dentro_de_aspas():
+    f = '=IF(A1=0,"sem valor, confira",SUMIFS(B:B,C:C,"x"))'
+    assert _para_dialeto_pt(f) == (
+        '=IF(A1=0;"sem valor, confira";SUMIFS(B:B;C:C;"x"))')
+
+
+def test_pipeline_completo_criterio_mais_dialeto():
+    """O caminho real da sincronização: canônica → critério → pt-BR."""
+    f = ("=SUMIFS('Lançamentos'!$J$4:$J$2177,'Lançamentos'!$G$4:$G$2177,"
+         "\"Telefone (Vivo/Telefônica)\",'Lançamentos'!$K$4:$K$2177,$E$4)")
+    final = _para_dialeto_pt(_sumifs_com_extrato(f))
+    assert final.endswith(";'Lançamentos'!$B$4:$B$2177;\"Extrato\")")
+    assert "," not in final.replace('"Telefone (Vivo/Telefônica)"', "")

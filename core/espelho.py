@@ -374,6 +374,30 @@ def _sumifs_com_extrato(formula: str) -> str:
     return "".join(saida)
 
 
+def _para_dialeto_pt(formula: str) -> str:
+    """
+    Converte os separadores de argumento de vírgula (forma canônica) para
+    ponto e vírgula (dialeto pt-BR), preservando o que está entre aspas.
+
+    Por que existe: a API LÊ fórmulas em forma canônica (nomes em inglês,
+    vírgulas), mas TODA escrita — updateCells/formulaValue inclusive — é
+    interpretada na LOCALIDADE da planilha. Descoberto em 09/08/2026 do
+    jeito caro: o ajustador gravou vírgulas e todos os grupos do Painel
+    Mensal viraram #ERROR!. Se a localidade da planilha um dia mudar para
+    en-US, isto precisa mudar junto.
+    """
+    saida = []
+    em_aspas = False
+    for ch in formula:
+        if ch == '"':
+            em_aspas = not em_aspas
+        if ch == "," and not em_aspas:
+            saida.append(";")
+        else:
+            saida.append(ch)
+    return "".join(saida)
+
+
 def _ajustar_painel_mensal(planilha, painel) -> None:
     """
     Ajustes estruturais do Painel Mensal (decisões do usuário, 09/08/2026):
@@ -383,10 +407,10 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
        acima do cabeçalho da tabela — via moveDimension, que reescreve as
        referências como um arrasto manual faria.
 
-    Leitura por gridData (formulaValue) e escrita por updateCells: as duas
-    pontas falam a forma canônica da API, imune à localidade — foi a lição
-    da célula J2, onde USER_ENTERED com vírgula quebrou no pt-BR.
-    Idempotente: rodar de novo não muda nada.
+    Leitura por gridData (canônica) e escrita por USER_ENTERED no dialeto
+    pt-BR (_para_dialeto_pt) — ver o comentário daquela função. O passo 1 é
+    AUTO-REPARADOR: reescreve as fórmulas dos grupos em toda sincronização,
+    então uma fórmula quebrada ali se conserta na rodada seguinte.
     """
     meta = planilha.fetch_sheet_metadata({
         "ranges": "'Painel Mensal'!A1:F80",
@@ -412,8 +436,11 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
 
     pedidos: List[Dict[str, Any]] = []
 
-    # --- 1. critério Extrato nos grupos de despesa (colunas B e C)
+    # --- 1. critério Extrato nos grupos de despesa (colunas B e C).
+    # SEMPRE reescreve (auto-reparo): a leitura vem canônica, o critério é
+    # garantido e a fórmula desce no dialeto pt-BR via USER_ENTERED.
     GRUPOS = ("APARTAMENTO", "FLAT", "PESSOAIS FIXAS", "DESPESAS VARI")
+    celulas_valores: List[Dict[str, Any]] = []
     dentro = False
     for r in range(len(grade)):
         rotulo = texto_a(r).upper()
@@ -431,12 +458,12 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
             f = formula(r, c)
             if not f or "SUMIFS(" not in f:
                 continue
-            nova = _sumifs_com_extrato(f)
-            if nova != f:
-                pedidos.append({"updateCells": {
-                    "start": {"sheetId": sid, "rowIndex": r, "columnIndex": c},
-                    "rows": [{"values": [{"userEnteredValue": {"formulaValue": nova}}]}],
-                    "fields": "userEnteredValue"}})
+            nova = _para_dialeto_pt(_sumifs_com_extrato(f))
+            celulas_valores.append({
+                "range": "%s%d" % ("B" if c == 1 else "C", r + 1),
+                "values": [[nova]]})
+    if celulas_valores:
+        painel.batch_update(celulas_valores, value_input_option="USER_ENTERED")
 
     # --- 2. RESULTADO DO MÊS sobe para a linha 5
     if not texto_a(4).upper().startswith("RESULTADO"):
