@@ -548,6 +548,45 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
             _formatar(painel, {"B%d" % linha: FORMATO_MOEDA})
             sid, grade = ler_grade()
 
+    # --- 0c. linha "Transferências recebidas" DENTRO do grupo RECEITAS,
+    # somando no Subtotal (decisão do usuário, 09/08/2026): as entradas por
+    # transferência (PIX entre contas etc.) contam como receita do mês no
+    # Painel. Só as POSITIVAS (">0") e só do extrato; Tipo="Transferência"
+    # já deixa os transportes de saldo de fora. O Subtotal é reescrito com o
+    # intervalo estendido, porque inserir linha na borda do SUM não o expande.
+    if achar("TRANSFERÊNCIAS RECEBIDAS") is None:
+        r_rec = achar("RECEITAS")
+        r_sub = None
+        for r in range(len(grade)):
+            rotulo = texto_a(r).upper()
+            if rotulo.startswith("SUBTOTAL") and "RECEITAS" in rotulo:
+                r_sub = r
+                break
+        if r_rec is not None and r_sub is not None and r_sub > r_rec:
+            planilha.batch_update({"requests": [{"insertDimension": {
+                "range": {"sheetId": sid, "dimension": "ROWS",
+                          "startIndex": r_sub, "endIndex": r_sub + 1},
+                "inheritFromBefore": True}}]})
+            nova_linha = r_sub + 1                     # 1-based
+            primeira = r_rec + 2                       # 1ª linha de dados do grupo
+            subtotal = r_sub + 2                       # subtotal, já deslocado
+            painel.batch_update([
+                {"range": "A%d" % nova_linha,
+                 "values": [["    Transferências recebidas (entre contas)"]]},
+                {"range": "B%d" % nova_linha,
+                 "values": [["=SUMIFS('Lançamentos'!$J$4:$J$100000;"
+                             "'Lançamentos'!$I$4:$I$100000;\"Transferência\";"
+                             "'Lançamentos'!$B$4:$B$100000;\"Extrato\";"
+                             "'Lançamentos'!$K$4:$K$100000;$E$4;"
+                             "'Lançamentos'!$J$4:$J$100000;\">0\")"]]},
+                {"range": "B%d" % subtotal,
+                 "values": [["=SUM($B%d:$B%d)" % (primeira, nova_linha)]]},
+                {"range": "C%d" % subtotal,
+                 "values": [["=SUM($C%d:$C%d)" % (primeira, nova_linha)]]},
+            ], value_input_option="USER_ENTERED")
+            _formatar(painel, {"B%d" % nova_linha: FORMATO_MOEDA})
+            sid, grade = ler_grade()
+
     # --- 1. critério Extrato nas RECEITAS e nos grupos de despesa (B e C).
     # RECEITAS também (decisão do usuário, 09/08/2026): só entradas que
     # passaram pelo extrato — estorno de cartão, por exemplo, já está dentro
