@@ -172,7 +172,11 @@ def ler(nome: str, dados: bytes, senha_pdf: str = "") -> Leitura:
         return _ler_xlsx(nome, dados)
     if ext == "pdf":
         return _ler_pdf(nome, dados, senha_pdf)
-    raise ErroDeLeitura("Extensão não suportada: .%s (use csv, xlsx, ofx ou pdf)" % ext)
+    if ext in ("png", "jpg", "jpeg", "webp"):
+        return _ler_imagem(nome, dados, ext)
+    raise ErroDeLeitura(
+        "Extensão não suportada: .%s (use csv, xlsx, ofx, pdf ou um print "
+        "de tela em png/jpg)" % ext)
 
 
 def _matriz_csv(dados: bytes) -> List[List[str]]:
@@ -710,4 +714,111 @@ def _pdf_nubank_extrato(nome: str, texto: str) -> Leitura:
         raise ErroDeLeitura(
             "Não achei lançamentos no extrato em PDF. O Nubank também exporta o "
             "extrato em CSV e em OFX — qualquer um dos dois é mais confiável.")
+    return r
+
+
+# --------------------------------------------------- print de tela (imagem)
+
+def _ler_imagem(nome: str, dados: bytes, ext: str) -> Leitura:
+    """Print de tela do app do banco → OCR pelo Drive → extrato parcial."""
+    from core import ocr_drive
+
+    tipo = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "webp": "image/webp"}.get(ext, "image/png")
+    try:
+        texto = ocr_drive.texto_de_imagem(nome, dados, tipo)
+    except ocr_drive.OcrIndisponivel as erro:
+        raise ErroDeLeitura(str(erro))
+    return extrato_de_print(nome, texto)
+
+
+MESES_LONGOS = {"JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4, "MAIO": 5,
+                "JUNHO": 6, "JULHO": 7, "AGOSTO": 8, "SETEMBRO": 9,
+                "OUTUBRO": 10, "NOVEMBRO": 11, "DEZEMBRO": 12}
+
+_DATA_PRINT = re.compile(
+    r"(?:SEGUNDA|TERCA|QUARTA|QUINTA|SEXTA|SABADO|DOMINGO)\s*[-,]?\s*"
+    r"(\d{1,2})\s+DE\s+([A-Z]+)")
+_VALOR_PRINT = re.compile(r"(−|-)?\s*R\$\s*([\d.]+,\d{2})")
+_RUIDO_PRINT = (
+    "SALDO DISPONIVEL", "SALDO + LIMITE", "ENTENDA SEU LIMITE",
+    "ULTIMA ATUALIZACAO", "ATUALIZAR", "FILTRAR", "COMPROVANTE",
+)
+
+
+def extrato_de_print(nome: str, texto: str) -> Leitura:
+    """
+    Extrato PARCIAL a partir do texto reconhecido num print do app Santander
+    (decisão do usuário, 09/08/2026).
+
+    O formato da tela: um cabeçalho com "Saldo disponível", depois blocos por
+    data ("Sexta, 7 de agosto") com as movimentações — título numa linha
+    (ex.: "Pix recebido") e contraparte + valor em seguida. Saída marcada com
+    "-R$"; entrada sem sinal. O ano NÃO aparece na tela: assume-se o ano
+    corrente, recuando um ano se a data cair no futuro.
+
+    A descrição é composta como "TÍTULO contraparte" de propósito — é a mesma
+    forma dos lançamentos que já entraram transcritos à mão ("PIX RECEBIDO
+    Vitor Alencar Farias Nepo"), então a deduplicação reconhece os repetidos.
+    """
+    r = Leitura("Print do app (OCR)", "Conta Santander")
+    hoje = dt.date.today()
+    data_atual: Optional[dt.date] = None
+    titulo_pendente = ""
+    saldo_do_print: Optional[float] = None
+
+    for bruta in texto.split("\n"):
+        s = " ".join(bruta.split()).strip()
+        if not s:
+            continue
+        n = normalizar(s)
+
+        m = _DATA_PRINT.search(n)
+        if m and MESES_LONGOS.get(m.group(2)):
+            ano = hoje.year
+            try:
+                data = dt.date(ano, MESES_LONGOS[m.group(2)], int(m.group(1)))
+            except ValueError:
+                continue
+            if data > hoje + dt.timedelta(days=7):
+                data = dt.date(ano - 1, data.month, data.day)
+            data_atual = data
+            titulo_pendente = ""
+            continue
+
+        mv = _VALOR_PRINT.search(s)
+        if mv:
+            valor = num_br(mv.group(2)) or 0.0
+            if mv.group(1):
+                valor = -valor
+            antes = s[:mv.start()].strip(" -–—•")
+            if data_atual is None:
+                # valor antes da primeira data = o saldo do topo da tela
+                if saldo_do_print is None and "SALDO" not in normalizar(antes):
+                    saldo_do_print = valor
+                continue
+            descricao = (titulo_pendente + " " + antes).strip()
+            titulo_pendente = ""
+            if not descricao:
+                continue
+            r.linhas.append({"data": data_atual, "descricao": descricao,
+                             "valor": valor, "conta": "Conta Santander",
+                             "competencia": primeiro_do_mes(data_atual),
+                             "arquivo": nome})
+            continue
+
+        if any(ruido in n for ruido in _RUIDO_PRINT):
+            continue
+        # linha de texto sem valor: é o título da próxima movimentação
+        titulo_pendente = s
+
+    if saldo_do_print is not None:
+        r.avisos.append(
+            "Saldo disponível no print: %.2f — compare com a soma da Conta "
+            "Santander na planilha; diferença é lançamento faltando."
+            % saldo_do_print)
+    if not r.linhas:
+        raise ErroDeLeitura(
+            "Não reconheci movimentações no print. Confira se a imagem mostra "
+            "a lista do extrato com as datas (\"Sexta, 7 de agosto\"...).")
     return r

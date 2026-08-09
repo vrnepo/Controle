@@ -396,10 +396,11 @@ async function desenharImportar() {
       <div class="cartao-corpo">
         <div class="solta" id="solta">
           <input type="file" id="arquivos" multiple
-            accept=".csv,.xlsx,.xlsm,.ofx,.qfx,.pdf,.txt">
+            accept=".csv,.xlsx,.xlsm,.ofx,.qfx,.pdf,.txt,.png,.jpg,.jpeg,.webp">
           <h3>Arraste os arquivos aqui</h3>
-          <p>ou clique para escolher · CSV, XLSX, OFX e PDF (inclusive a fatura do
-             Santander com senha)</p>
+          <p>ou clique para escolher · CSV, XLSX, OFX, PDF (inclusive a fatura do
+             Santander com senha) e <strong>print de tela do app</strong> (png/jpg)
+             para extrato parcial</p>
         </div>
         <ul class="lista-arquivos" id="escolhidos"></ul>
         <div style="display:flex;gap:8px;margin-top:16px;align-items:center">
