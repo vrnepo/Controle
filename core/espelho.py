@@ -309,6 +309,7 @@ def sincronizar() -> Dict[str, int]:
         painel = planilha.worksheet("Painel Mensal")
         painel.update_index(0)
         _validacoes_painel_mensal(planilha, painel)
+        _ajustar_painel_mensal(planilha, painel)
     except Exception:
         pass
 
@@ -327,6 +328,133 @@ def sincronizar() -> Dict[str, int]:
     contagem["importacoes"] = len(imp)
 
     return contagem
+
+
+def _sumifs_com_extrato(formula: str) -> str:
+    """
+    Acrescenta o critério Fonte="Extrato" a cada SUMIFS sobre Lançamentos.
+
+    Decisão do usuário (09/08/2026): no Painel Mensal, os grupos de despesa
+    (Apartamento, FLAT, Pessoais Fixas, Despesas Variáveis) mostram só o que
+    saiu da CONTA no mês — o que foi no cartão já está dentro da linha da
+    fatura, que é paga no mês selecionado; sem o filtro, o mesmo gasto
+    aparecia duas vezes na leitura.
+
+    O parser respeita aspas ao casar parênteses porque os critérios contêm
+    parênteses ("Telefone (Vivo/Telefônica)") — um replace ingênuo fecharia a
+    fórmula no lugar errado. Opera na forma CANÔNICA da API (vírgulas).
+    """
+    CRITERIO = ",'Lançamentos'!$B$4:$B$2177,\"Extrato\""
+    saida = []
+    i = 0
+    while True:
+        pos = formula.find("SUMIFS(", i)
+        if pos < 0:
+            saida.append(formula[i:])
+            break
+        fim = pos + len("SUMIFS(")
+        profundidade = 1
+        em_aspas = False
+        while fim < len(formula) and profundidade:
+            ch = formula[fim]
+            if ch == '"':
+                em_aspas = not em_aspas
+            elif not em_aspas:
+                if ch == "(":
+                    profundidade += 1
+                elif ch == ")":
+                    profundidade -= 1
+            fim += 1
+        chamada = formula[pos:fim]                      # SUMIFS(...) completo
+        if "Lançamentos" in chamada and "Extrato" not in chamada:
+            chamada = chamada[:-1] + CRITERIO + ")"
+        saida.append(formula[i:pos])
+        saida.append(chamada)
+        i = fim
+    return "".join(saida)
+
+
+def _ajustar_painel_mensal(planilha, painel) -> None:
+    """
+    Ajustes estruturais do Painel Mensal (decisões do usuário, 09/08/2026):
+    1. grupos de despesa passam a filtrar Fonte = "Extrato" (ver
+       _sumifs_com_extrato);
+    2. o bloco RESULTADO DO MÊS sobe para logo abaixo dos seletores (linha 5),
+       acima do cabeçalho da tabela — via moveDimension, que reescreve as
+       referências como um arrasto manual faria.
+
+    Leitura por gridData (formulaValue) e escrita por updateCells: as duas
+    pontas falam a forma canônica da API, imune à localidade — foi a lição
+    da célula J2, onde USER_ENTERED com vírgula quebrou no pt-BR.
+    Idempotente: rodar de novo não muda nada.
+    """
+    meta = planilha.fetch_sheet_metadata({
+        "ranges": "'Painel Mensal'!A1:F80",
+        "includeGridData": True,
+        "fields": "sheets(properties(sheetId,title),"
+                  "data(rowData(values(userEnteredValue,formattedValue))))"})
+    folha = next(s for s in meta["sheets"]
+                 if s["properties"]["title"] == "Painel Mensal")
+    sid = folha["properties"]["sheetId"]
+    grade = folha["data"][0].get("rowData", [])
+
+    def celula(r: int, c: int) -> Dict[str, Any]:
+        try:
+            return grade[r]["values"][c] or {}
+        except (IndexError, KeyError):
+            return {}
+
+    def texto_a(r: int) -> str:
+        return (celula(r, 0).get("formattedValue") or "").strip()
+
+    def formula(r: int, c: int) -> str:
+        return (celula(r, 0 + c).get("userEnteredValue") or {}).get("formulaValue") or ""
+
+    pedidos: List[Dict[str, Any]] = []
+
+    # --- 1. critério Extrato nos grupos de despesa (colunas B e C)
+    GRUPOS = ("APARTAMENTO", "FLAT", "PESSOAIS FIXAS", "DESPESAS VARI")
+    dentro = False
+    for r in range(len(grade)):
+        rotulo = texto_a(r).upper()
+        if not rotulo:
+            continue
+        if any(rotulo.startswith(g) for g in GRUPOS):
+            dentro = True
+            continue
+        if rotulo.startswith("SUBTOTAL") or rotulo.startswith("RESULTADO"):
+            dentro = False
+            continue
+        if not dentro:
+            continue
+        for c in (1, 2):                                # B (mês) e C (média)
+            f = formula(r, c)
+            if not f or "SUMIFS(" not in f:
+                continue
+            nova = _sumifs_com_extrato(f)
+            if nova != f:
+                pedidos.append({"updateCells": {
+                    "start": {"sheetId": sid, "rowIndex": r, "columnIndex": c},
+                    "rows": [{"values": [{"userEnteredValue": {"formulaValue": nova}}]}],
+                    "fields": "userEnteredValue"}})
+
+    # --- 2. RESULTADO DO MÊS sobe para a linha 5
+    if not texto_a(4).upper().startswith("RESULTADO"):
+        inicio = fim = None
+        for r in range(len(grade)):
+            if texto_a(r).upper().startswith("RESULTADO DO M"):
+                inicio = r
+            if inicio is not None and texto_a(r).lower().startswith("resultado (sobra"):
+                fim = r
+                break
+        if inicio is not None and fim is not None and inicio > 4:
+            pedidos.append({"moveDimension": {
+                "source": {"sheetId": sid, "dimension": "ROWS",
+                           "startIndex": inicio, "endIndex": fim + 1},
+                "destinationIndex": 4}})
+
+    if pedidos:
+        planilha.batch_update({"requests": pedidos})
 
 
 def _validacoes_painel_mensal(planilha, painel) -> None:
