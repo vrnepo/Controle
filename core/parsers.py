@@ -173,7 +173,7 @@ def ler(nome: str, dados: bytes, senha_pdf: str = "") -> Leitura:
     if ext == "pdf":
         return _ler_pdf(nome, dados, senha_pdf)
     if ext in ("png", "jpg", "jpeg", "webp"):
-        return _ler_imagem(nome, dados, ext)
+        return _ler_imagem(nome, dados)
     raise ErroDeLeitura(
         "Extensão não suportada: .%s (use csv, xlsx, ofx, pdf ou um print "
         "de tela em png/jpg)" % ext)
@@ -719,15 +719,15 @@ def _pdf_nubank_extrato(nome: str, texto: str) -> Leitura:
 
 # --------------------------------------------------- print de tela (imagem)
 
-def _ler_imagem(nome: str, dados: bytes, ext: str) -> Leitura:
-    """Print de tela do app do banco → OCR pelo Drive → extrato parcial."""
-    from core import ocr_drive
+def _ler_imagem(nome: str, dados: bytes) -> Leitura:
+    """Print de tela do app do banco → OCR na Vision API → extrato parcial.
+    (O OCR via conversão no Drive foi removido em 10/08/2026 — conta de
+    serviço não tem mais cota de armazenamento; ver core/ocr_vision.py.)"""
+    from core import ocr_vision
 
-    tipo = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
-            "webp": "image/webp"}.get(ext, "image/png")
     try:
-        texto = ocr_drive.texto_de_imagem(nome, dados, tipo)
-    except ocr_drive.OcrIndisponivel as erro:
+        texto = ocr_vision.texto_de_imagem(dados)
+    except ocr_vision.OcrIndisponivel as erro:
         raise ErroDeLeitura(str(erro))
     return extrato_de_print(nome, texto)
 

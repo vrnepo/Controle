@@ -241,9 +241,14 @@ planilha.
 
 1. Entre em <https://console.cloud.google.com> **com a conta Google nova**.
 2. Crie um projeto: `financas-espelho`.
-3. *APIs e serviços → Biblioteca* → ative as duas:
+3. *APIs e serviços → Biblioteca* → ative as três:
    - **Google Sheets API**
    - **Google Drive API**
+   - **Cloud Vision API** — é o OCR da importação por print de tela.
+     Ela exige **faturamento vinculado ao projeto** (menu *Faturamento*;
+     as 1.000 primeiras imagens/mês são gratuitas — alguns prints por mês
+     custam R$ 0). Sem a API ou sem o faturamento, só a importação por
+     imagem falha, com a instrução do que ativar na própria tela.
 
 ### 6.2 Conta de serviço
 

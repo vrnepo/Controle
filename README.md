@@ -110,7 +110,9 @@ Na **conta Google nova**, não na do SICAD:
 
 1. [console.cloud.google.com](https://console.cloud.google.com) → novo projeto
    (ex.: `financas-espelho`).
-2. Ative a **Google Sheets API** e a **Google Drive API**.
+2. Ative a **Google Sheets API**, a **Google Drive API** e a **Cloud Vision
+   API** (OCR dos prints; exige faturamento no projeto — 1.000 imagens/mês
+   gratuitas).
 3. *IAM e administrador → Contas de serviço* → criar → *Chaves* → **Adicionar
    chave → JSON**. Baixe o arquivo.
 4. Cole o **conteúdo inteiro do JSON, em uma linha só**, em
