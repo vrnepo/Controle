@@ -34,8 +34,11 @@ def test_recusa_desconhecida_mostra_codigo_e_texto():
 
 # ------------------------------------ reconstrução das linhas pela posição
 
-def _palavra(texto, x, topo, base):
-    return {"texto": texto, "x": x, "topo": topo, "base": base}
+def _palavra(texto, x, topo, base, fim=None):
+    # fim padrão: caixa proporcional ao texto (~15 px por caractere), como
+    # numa fonte de ~30 px — o suficiente para os espaçamentos dos cenários
+    return {"texto": texto, "x": x, "topo": topo, "base": base,
+            "fim": fim if fim is not None else x + 15 * len(texto)}
 
 
 def _cenario_do_drift():
@@ -48,25 +51,41 @@ def _cenario_do_drift():
     verdade da tela.
     """
     return [
-        # Sexta, 7 de agosto (linha y 100-130)
-        _palavra("Sexta,", 60, 100, 130), _palavra("7", 130, 100, 130),
-        _palavra("de", 150, 100, 130), _palavra("agosto", 180, 100, 130),
+        # Sexta, 7 de agosto (linha y 100-130); folga entre palavras = 10 px
+        _palavra("Sexta,", 60, 100, 130), _palavra("7", 160, 100, 130),
+        _palavra("de", 185, 100, 130), _palavra("agosto", 225, 100, 130),
         # título (y 140-170) e contraparte (y 180-210) do 2º Pix
-        _palavra("Pix", 60, 140, 170), _palavra("recebido", 100, 140, 170),
-        _palavra("Vitor", 60, 180, 210), _palavra("a", 110, 180, 210),
-        _palavra("f", 125, 180, 210), _palavra("nepomuceno", 140, 180, 210),
+        _palavra("Pix", 60, 140, 170), _palavra("recebido", 115, 140, 170),
+        _palavra("Vitor", 60, 180, 210), _palavra("a", 145, 180, 210),
+        _palavra("f", 170, 180, 210), _palavra("nepomuceno", 195, 180, 210),
         # Terça, 4 de agosto (y 220-250) — no .text corrido vinha ANTES do valor
-        _palavra("Terça,", 60, 220, 250), _palavra("4", 130, 220, 250),
-        _palavra("de", 150, 220, 250), _palavra("agosto", 180, 220, 250),
+        _palavra("Terça,", 60, 220, 250), _palavra("4", 160, 220, 250),
+        _palavra("de", 185, 220, 250), _palavra("agosto", 225, 220, 250),
         # o valor do Pix, geometricamente na linha da contraparte (y 180-210)
         _palavra("R$", 700, 180, 210), _palavra("120,00", 740, 180, 210),
         # Liquido de vencimento (y 260-290) + contraparte com valor (y 300-330)
-        _palavra("Liquido", 60, 260, 290), _palavra("de", 140, 260, 290),
-        _palavra("vencimento", 170, 260, 290),
+        _palavra("Liquido", 60, 260, 290), _palavra("de", 175, 260, 290),
+        _palavra("vencimento", 215, 260, 290),
         _palavra("Municipio", 60, 300, 330),
-        _palavra("04249873300014", 160, 300, 330),
+        _palavra("04249873300014", 205, 300, 330),
         _palavra("R$", 680, 300, 330), _palavra("12.742,33", 720, 300, 330),
     ]
+
+
+def test_pedacos_colados_se_emendam_e_espacos_reais_ficam():
+    """A Vision fatia "-R$" e "6.580,38" em pedaços; juntar tudo com espaço
+    quebrava o padrão de valor ("6.580 , 38") — foi o "Não reconheci
+    movimentações" da reimportação de 10/08/2026. Pedaço colado emenda;
+    espaço de verdade (folga maior que ~20% da altura) permanece."""
+    from core.ocr_vision import _linhas_por_posicao
+    linha = [
+        _palavra("-", 88, 0, 30, fim=96),
+        _palavra("R$", 100, 0, 30, fim=130),
+        _palavra("6.580", 140, 0, 30, fim=215),
+        _palavra(",", 216, 0, 30, fim=222),
+        _palavra("38", 223, 0, 30, fim=253),
+    ]
+    assert _linhas_por_posicao(linha) == "-R$ 6.580,38"
 
 
 def test_linhas_saem_na_ordem_da_tela_mesmo_com_texto_embaralhado():
@@ -113,5 +132,6 @@ def test_palavras_da_anotacao_extrai_texto_e_caixa():
                                       {"x": 20, "y": 30}, {"y": 30}]}},
     ]}]}]}]}
     palavras = _palavras_da_anotacao(anotacao)
-    assert palavras[0] == {"texto": "R$", "x": 700, "topo": 180, "base": 210}
+    assert palavras[0] == {"texto": "R$", "x": 700, "fim": 730,
+                           "topo": 180, "base": 210}
     assert palavras[1]["x"] == 0 and palavras[1]["texto"] == "Oi"

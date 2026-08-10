@@ -82,7 +82,7 @@ def _palavras_da_anotacao(anotacao: Dict[str, Any]) -> List[Dict[str, Any]]:
                         continue
                     xs = [v.get("x", 0) for v in vertices]
                     ys = [v.get("y", 0) for v in vertices]
-                    saida.append({"texto": texto, "x": min(xs),
+                    saida.append({"texto": texto, "x": min(xs), "fim": max(xs),
                                   "topo": min(ys), "base": max(ys)})
     return saida
 
@@ -112,9 +112,26 @@ def _linhas_por_posicao(palavras: List[Dict[str, Any]]) -> str:
                 atual.append(p)
                 continue
         linhas.append([p])
-    return "\n".join(
-        " ".join(q["texto"] for q in sorted(linha, key=lambda q: q["x"]))
-        for linha in linhas)
+    return "\n".join(_texto_da_linha(linha) for linha in linhas)
+
+
+def _texto_da_linha(linha: List[Dict[str, Any]]) -> str:
+    """
+    Junta as palavras de uma linha visual respeitando o ESPAÇAMENTO real
+    entre as caixas: a Vision fatia tokens em pedaços ("6.580" "," "38";
+    "-" "R$") e juntar tudo com espaço quebrava o padrão de valor do
+    extrato_de_print — foi o "Não reconheci movimentações" de 10/08/2026 na
+    reimportação. Pedaços praticamente colados (folga proporcional à altura
+    da linha) se emendam sem espaço; o resto ganha espaço normal.
+    """
+    linha = sorted(linha, key=lambda q: q["x"])
+    altura = sum(q["base"] - q["topo"] for q in linha) / len(linha)
+    folga = max(3.0, altura * 0.2)
+    partes = [linha[0]["texto"]]
+    for anterior, seguinte in zip(linha, linha[1:]):
+        sep = "" if (seguinte["x"] - anterior["fim"]) <= folga else " "
+        partes.append(sep + seguinte["texto"])
+    return "".join(partes)
 
 
 def texto_de_imagem(dados: bytes) -> str:

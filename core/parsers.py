@@ -834,7 +834,13 @@ def extrato_de_print(nome: str, texto: str) -> Leitura:
             "Santander na planilha; diferença é lançamento faltando."
             % saldo_do_print)
     if not r.linhas:
+        # A amostra do que o OCR devolveu faz a falha se explicar sozinha na
+        # tela de importação — em 10/08/2026 um "Não reconheci" seco custou
+        # uma rodada inteira de adivinhação sobre o que a Vision tinha lido.
+        amostra = " ⏎ ".join(
+            [" ".join(l.split()) for l in texto.split("\n") if l.strip()][:12])
         raise ErroDeLeitura(
             "Não reconheci movimentações no print. Confira se a imagem mostra "
-            "a lista do extrato com as datas (\"Sexta, 7 de agosto\"...).")
+            "a lista do extrato com as datas (\"Sexta, 7 de agosto\"...). "
+            "Começo do que o OCR devolveu: %s" % (amostra[:400] or "(nada)"))
     return r
