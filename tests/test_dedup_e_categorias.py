@@ -107,6 +107,54 @@ def test_arquivo_com_uma_linha_nova_entre_conhecidas():
     assert inseridos == ["juros_rotativo"] and duplicados == 3
 
 
+# ------------------------------------------ quase-duplicata (só do print)
+
+def test_quase_duplicata_do_print_nao_entra():
+    """O caso real de 10/08/2026: o OCR trocou a descrição ("Municipio
+    04249873300014" sem o título) e a chave exata não casou com a transcrição
+    à mão — mas conta, dia e valor eram os mesmos. Não pode entrar."""
+    t = (1, "2026-08-04", 1274233)
+    decisoes = importacao.decidir_linhas(
+        [("chave-do-ocr", t)], ja_no_banco={}, quase_gemeas={t: 1})
+    assert decisoes == [("quase", 1)]
+
+
+def test_quase_duplicata_nao_afeta_formatos_sem_o_dicionario():
+    """PDF/CSV têm descrição estável: quase_gemeas vem vazio e nada muda."""
+    t = (1, "2026-08-04", 1274233)
+    decisoes = importacao.decidir_linhas(
+        [("chave-do-pdf", t)], ja_no_banco={}, quase_gemeas={})
+    assert decisoes == [("insere", 1)]
+
+
+def test_gemea_exata_consome_a_vaga_da_quase_duplicata():
+    """Print com 2 linhas de mesmo valor no dia: uma casa por chave exata
+    (duplicada) e a outra é nova de verdade — o banco só tem 1 lançamento
+    naquele (dia, valor), já consumido pela gêmea exata. A nova ENTRA."""
+    t = (1, "2026-08-10", -10000)
+    decisoes = importacao.decidir_linhas(
+        [("pix-para-a", t), ("pix-para-b", t)],
+        ja_no_banco={"pix-para-a": 1}, quase_gemeas={t: 1})
+    assert decisoes == [("duplicada", 1), ("insere", 1)]
+
+
+def test_dois_gemeos_legitimos_no_print_com_banco_vazio_entram():
+    t = (1, "2026-08-10", -10000)
+    decisoes = importacao.decidir_linhas(
+        [("pix-x", t), ("pix-x", t)], ja_no_banco={}, quase_gemeas={})
+    assert decisoes == [("insere", 1), ("insere", 2)]
+
+
+def test_banco_com_duas_grafias_absorve_duas_linhas_do_print():
+    """PDF já trouxe os dois PIX de 100 com nomes completos; o print mostra
+    os mesmos dois com nomes cortados. Nenhum entra de novo."""
+    t = (1, "2026-08-10", -10000)
+    decisoes = importacao.decidir_linhas(
+        [("print-a", t), ("print-b", t)], ja_no_banco={}, quase_gemeas={t: 2})
+    # ocorrencia é por CHAVE — cada grafia é a 1ª da sua
+    assert decisoes == [("quase", 1), ("quase", 1)]
+
+
 # --------------------------------------------------------- categorização
 
 def test_transferencia_vence_tudo():

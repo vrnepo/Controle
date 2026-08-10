@@ -732,6 +732,10 @@ def _ler_imagem(nome: str, dados: bytes) -> Leitura:
     return extrato_de_print(nome, texto)
 
 
+# A importação usa este rótulo para ligar a barreira de quase-duplicata:
+# só o print tem descrição instável (OCR + nome cortado na tela do app).
+FORMATO_PRINT = "Print do app (OCR)"
+
 MESES_LONGOS = {"JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4, "MAIO": 5,
                 "JUNHO": 6, "JULHO": 7, "AGOSTO": 8, "SETEMBRO": 9,
                 "OUTUBRO": 10, "NOVEMBRO": 11, "DEZEMBRO": 12}
@@ -764,7 +768,7 @@ def extrato_de_print(nome: str, texto: str) -> Leitura:
     forma dos lançamentos que já entraram transcritos à mão ("PIX RECEBIDO
     Vitor Alencar Farias Nepo"), então a deduplicação reconhece os repetidos.
     """
-    r = Leitura("Print do app (OCR)", "Conta Santander")
+    r = Leitura(FORMATO_PRINT, "Conta Santander")
     hoje = dt.date.today()
     data_atual: Optional[dt.date] = None
     titulo_pendente = ""

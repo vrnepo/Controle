@@ -135,6 +135,33 @@ def contagem_por_chave(chaves: Sequence[str]) -> Dict[str, int]:
         return {r["chave"]: int(r["n"]) for r in rs.mappings().all()}
 
 
+def contagem_por_dia_valor(
+        pares: Iterable[Tuple[int, dt.date]]) -> Dict[Tuple[int, str, int], int]:
+    """
+    Quantos lançamentos existem por (conta, dia, valor em centavos) nos dias
+    afetados. Base da barreira de QUASE-DUPLICATA da importação por print
+    (10/08/2026): o OCR e o corte de tela do app mudam a grafia da descrição,
+    a chave exata não casa, mas conta+dia+valor iguais vindos de outra
+    importação são quase certamente a mesma transação.
+    """
+    pares = list(set(pares))
+    if not pares:
+        return {}
+    condicoes, params = [], {}
+    for i, (conta_id, dia) in enumerate(pares):
+        condicoes.append("(conta_id = :c%d AND data = :d%d)" % (i, i))
+        params["c%d" % i] = conta_id
+        params["d%d" % i] = dia
+    with bd.obter_conexao() as c:
+        rs = c.execute(text(
+            "SELECT conta_id, data, valor, count(*) AS n FROM lancamentos "
+            "WHERE " + " OR ".join(condicoes) +
+            " GROUP BY conta_id, data, valor"), params)
+        return {(int(r["conta_id"]), r["data"].isoformat(),
+                 int(round(float(r["valor"]) * 100))): int(r["n"])
+                for r in rs.mappings().all()}
+
+
 def chaves_das_competencias(pares: Iterable[Tuple[int, dt.date]]) -> List[str]:
     """
     Todas as chaves já gravadas nas competências afetadas pela importação.

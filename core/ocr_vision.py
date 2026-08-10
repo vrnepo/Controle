@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import json
+from typing import Any, Dict, List
 
 from core import config
 
@@ -67,6 +68,55 @@ def explicar_recusa(codigo: int, texto: str) -> str:
     return "A Vision API recusou a imagem (%d): %s" % (codigo, texto[:300])
 
 
+def _palavras_da_anotacao(anotacao: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Achata a fullTextAnnotation em palavras com posição (x, topo, base)."""
+    saida: List[Dict[str, Any]] = []
+    for pagina in anotacao.get("pages", []):
+        for bloco in pagina.get("blocks", []):
+            for paragrafo in bloco.get("paragraphs", []):
+                for palavra in paragrafo.get("words", []):
+                    texto = "".join(s.get("text", "")
+                                    for s in palavra.get("symbols", []))
+                    vertices = (palavra.get("boundingBox") or {}).get("vertices") or []
+                    if not texto.strip() or not vertices:
+                        continue
+                    xs = [v.get("x", 0) for v in vertices]
+                    ys = [v.get("y", 0) for v in vertices]
+                    saida.append({"texto": texto, "x": min(xs),
+                                  "topo": min(ys), "base": max(ys)})
+    return saida
+
+
+def _linhas_por_posicao(palavras: List[Dict[str, Any]]) -> str:
+    """
+    Reconstrói as linhas VISUAIS pela posição das palavras — a correção da
+    quase-duplicata de 10/08/2026. O texto corrido da Vision (.text) veio com
+    valores da coluna da direita DESLOCADOS: o "R$ 120,00" de um Pix caiu
+    depois do cabeçalho de data seguinte, e a movimentação saiu com descrição
+    e data de outra transação — furando a deduplicação. Aqui cada linha da
+    tela vira uma linha de texto: palavras cujo centro vertical cai na faixa
+    da linha corrente pertencem a ela, ordenadas da esquerda para a direita —
+    contraparte e valor saem JUNTOS, na ordem em que aparecem na tela.
+    """
+    if not palavras:
+        return ""
+    palavras = sorted(palavras, key=lambda p: (p["topo"] + p["base"]) / 2)
+    linhas: List[List[Dict[str, Any]]] = []
+    for p in palavras:
+        centro = (p["topo"] + p["base"]) / 2
+        if linhas:
+            atual = linhas[-1]
+            topo = sum(q["topo"] for q in atual) / len(atual)
+            base = sum(q["base"] for q in atual) / len(atual)
+            if topo <= centro <= base:
+                atual.append(p)
+                continue
+        linhas.append([p])
+    return "\n".join(
+        " ".join(q["texto"] for q in sorted(linha, key=lambda q: q["x"]))
+        for linha in linhas)
+
+
 def texto_de_imagem(dados: bytes) -> str:
     """
     Devolve o texto reconhecido na imagem (a Vision identifica o formato
@@ -74,8 +124,9 @@ def texto_de_imagem(dados: bytes) -> str:
     OcrIndisponivel com o motivo em português se algo impedir.
 
     DOCUMENT_TEXT_DETECTION em vez de TEXT_DETECTION: o print do app é texto
-    denso organizado em linhas, e o modo documento preserva melhor a ordem —
-    é com essa ordem que o extrato_de_print monta título + contraparte.
+    denso organizado em linhas. As linhas devolvidas NÃO são o .text corrido
+    da API — são reconstruídas pela posição das palavras (_linhas_por_posicao),
+    porque a ordem do .text embaralhou coluna esquerda e direita em produção.
     """
     sessao = _sessao()
     pedido = {"requests": [{
@@ -91,4 +142,6 @@ def texto_de_imagem(dados: bytes) -> str:
         erro = corpo["error"]
         raise OcrIndisponivel(explicar_recusa(int(erro.get("code", 0)),
                                               json.dumps(erro)))
-    return (corpo.get("fullTextAnnotation") or {}).get("text", "")
+    anotacao = corpo.get("fullTextAnnotation") or {}
+    linhas = _linhas_por_posicao(_palavras_da_anotacao(anotacao))
+    return linhas or anotacao.get("text", "")

@@ -47,6 +47,40 @@ def chave_sem_dia(k: str) -> str:
     return "|".join([partes[0], partes[1]] + partes[3:])
 
 
+def decidir_linhas(linhas: List[Tuple[str, Tuple[int, str, int]]],
+                   ja_no_banco: Dict[str, int],
+                   quase_gemeas: Dict[Tuple[int, str, int], int]
+                   ) -> List[Tuple[str, int]]:
+    """
+    O veredicto de cada linha, na ordem do arquivo: ("insere" | "duplicada" |
+    "quase", ocorrencia). Pura de propósito — é a regra que, se errar, erra
+    o dinheiro.
+
+    Degraus: 1) chave exata já no banco, por MULTIPLICIDADE (comportamento de
+    sempre); 2) QUASE-DUPLICATA (10/08/2026, só para print — `quase_gemeas`
+    vem vazio nos demais formatos): mesma (conta, dia, valor) já no banco com
+    outra grafia NÃO entra. Foi o furo real: o OCR trocou a descrição/data e
+    "Liquido de vencimento 12.742,33" entrou de novo ao lado da transcrição à
+    mão. Cada linha do banco só "absorve" UMA linha do arquivo (consumidas):
+    dois PIX legítimos de mesmo valor no mesmo dia continuam entrando quando
+    o banco só tem um.
+    """
+    vistas: collections.Counter = collections.Counter()
+    consumidas: collections.Counter = collections.Counter()
+    saida: List[Tuple[str, int]] = []
+    for k, tripla in linhas:
+        vistas[k] += 1
+        if vistas[k] <= ja_no_banco.get(k, 0):
+            consumidas[tripla] += 1              # a gêmea exata também conta
+            saida.append(("duplicada", vistas[k]))
+        elif consumidas[tripla] < quase_gemeas.get(tripla, 0):
+            consumidas[tripla] += 1
+            saida.append(("quase", vistas[k]))
+        else:
+            saida.append(("insere", vistas[k]))
+    return saida
+
+
 class Resultado:
     def __init__(self, arquivo: str, formato: str = "", conta: str = ""):
         self.arquivo = arquivo
@@ -152,19 +186,43 @@ def _gravar(leitura: parsers.Leitura, resultado: Resultado) -> None:
     no_mes = collections.Counter(
         chave_sem_dia(k) for k in repositorio.chaves_das_competencias(pares_competencia))
 
-    vistas: collections.Counter = collections.Counter()
+    # Quase-gêmeas SÓ para print (ver decidir_linhas): nos outros formatos a
+    # descrição é estável e a chave exata basta — o dicionário fica vazio e o
+    # degrau 2 nunca dispara.
+    quase_gemeas: Dict[Tuple[int, str, int], int] = {}
+    if leitura.formato == parsers.FORMATO_PRINT:
+        quase_gemeas = repositorio.contagem_por_dia_valor(
+            {(d["conta_id"], d["data"]) for _, d in preparadas})
+
+    def tripla(d: Dict[str, Any]) -> Tuple[int, str, int]:
+        return (d["conta_id"], d["data"].isoformat(),
+                int(round(float(d["valor"]) * 100)))
+
+    decisoes = decidir_linhas([(k, tripla(d)) for k, d in preparadas],
+                              ja_no_banco, quase_gemeas)
+    quase = 0
     novas: List[Dict[str, Any]] = []
-    for k, dados in preparadas:
-        vistas[k] += 1
-        ocorrencia = vistas[k]
-        if ocorrencia <= ja_no_banco.get(k, 0):
+    for (k, dados), (veredicto, ocorrencia) in zip(preparadas, decisoes):
+        if veredicto == "duplicada":
             resultado.duplicados += 1
+            continue
+        if veredicto == "quase":
+            resultado.duplicados += 1
+            quase += 1
             continue
         if ja_no_banco.get(k, 0) == 0 and no_mes.get(chave_sem_dia(k), 0) > 0:
             resultado.suspeitos += 1
         dados["chave"] = k
         dados["ocorrencia"] = ocorrencia
         novas.append(dados)
+
+    if quase:
+        resultado.avisos.append(
+            "%d linha(s) do print não entraram: o banco já tem lançamento com "
+            "a mesma conta, mesmo dia e mesmo valor vindo de outra importação "
+            "(grafia diferente — quase-duplicata). Se for de fato OUTRA "
+            "transação de igual valor no mesmo dia, lance à mão pela tela "
+            "Lançamentos." % quase)
 
     resultado.inseridos = repositorio.inserir_lancamentos(novas)
     # A diferença entre o que tentamos inserir e o que o banco aceitou só pode
