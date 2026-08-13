@@ -29,6 +29,19 @@ from core import categorizacao, config, parsers, repositorio
 # "novas" na primeira importação.
 LIMITE_DESCRICAO = 80
 
+# Formatos onde a MESMA transação chega com grafia diferente e a chave exata
+# não protege. Print: o OCR reescreve a descrição (caso de 10/08/2026).
+# Faturas: medido em 13/08/2026 na Nubank ago/26 — CSV parcial, CSV fechado e
+# PDF grafam o mesmo item de três jeitos ("IOF de compra internacional" ×
+# 'IOF de "Anthropic"' × "IOF de Anthropic* Claude Sub"; "Cursor Ai" ×
+# "Cursor, Ai"), e 19 duplicatas entraram somando R$ 883,21. Extratos ficam
+# FORA: lá a grafia é estável e a barreira só arriscaria bloquear PIX
+# legítimos de mesmo valor no mesmo dia.
+FORMATOS_QUASE_DUPLICATA = frozenset([
+    "Print do app (OCR)",
+    "CSV fatura Nubank", "PDF fatura Nubank", "PDF fatura Santander",
+])
+
 
 def chave(conta_id: int, competencia: dt.date, data: dt.date,
           descricao: str, valor: float) -> str:
@@ -57,9 +70,9 @@ def decidir_linhas(linhas: List[Tuple[str, Tuple[int, str, int]]],
     o dinheiro.
 
     Degraus: 1) chave exata já no banco, por MULTIPLICIDADE (comportamento de
-    sempre); 2) QUASE-DUPLICATA (10/08/2026, só para print — `quase_gemeas`
-    vem vazio nos demais formatos): mesma (conta, dia, valor) já no banco com
-    outra grafia NÃO entra. Foi o furo real: o OCR trocou a descrição/data e
+    sempre); 2) QUASE-DUPLICATA (10/08/2026 p/ print; 13/08/2026 também p/
+    faturas — `quase_gemeas` vem vazio nos demais formatos): mesma (conta,
+    dia, valor) já no banco com outra grafia NÃO entra. Foi o furo real: o OCR trocou a descrição/data e
     "Liquido de vencimento 12.742,33" entrou de novo ao lado da transcrição à
     mão. Cada linha do banco só "absorve" UMA linha do arquivo (consumidas):
     dois PIX legítimos de mesmo valor no mesmo dia continuam entrando quando
@@ -186,11 +199,11 @@ def _gravar(leitura: parsers.Leitura, resultado: Resultado) -> None:
     no_mes = collections.Counter(
         chave_sem_dia(k) for k in repositorio.chaves_das_competencias(pares_competencia))
 
-    # Quase-gêmeas SÓ para print (ver decidir_linhas): nos outros formatos a
-    # descrição é estável e a chave exata basta — o dicionário fica vazio e o
-    # degrau 2 nunca dispara.
+    # Quase-gêmeas para print E faturas (FORMATOS_QUASE_DUPLICATA — extensão
+    # de 13/08/2026): nos extratos a descrição é estável e a chave exata
+    # basta — o dicionário fica vazio e o degrau 2 nunca dispara.
     quase_gemeas: Dict[Tuple[int, str, int], int] = {}
-    if leitura.formato == parsers.FORMATO_PRINT:
+    if leitura.formato in FORMATOS_QUASE_DUPLICATA:
         quase_gemeas = repositorio.contagem_por_dia_valor(
             {(d["conta_id"], d["data"]) for _, d in preparadas})
 
@@ -218,11 +231,11 @@ def _gravar(leitura: parsers.Leitura, resultado: Resultado) -> None:
 
     if quase:
         resultado.avisos.append(
-            "%d linha(s) do print não entraram: o banco já tem lançamento com "
-            "a mesma conta, mesmo dia e mesmo valor vindo de outra importação "
-            "(grafia diferente — quase-duplicata). Se for de fato OUTRA "
-            "transação de igual valor no mesmo dia, lance à mão pela tela "
-            "Lançamentos." % quase)
+            "%d linha(s) do arquivo não entraram: o banco já tem lançamento "
+            "com a mesma conta, mesmo dia e mesmo valor vindo de outra "
+            "importação (grafia diferente — quase-duplicata). Se for de fato "
+            "OUTRA transação de igual valor no mesmo dia, lance à mão pela "
+            "tela Lançamentos." % quase)
 
     resultado.inseridos = repositorio.inserir_lancamentos(novas)
     # A diferença entre o que tentamos inserir e o que o banco aceitou só pode

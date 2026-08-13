@@ -120,11 +120,33 @@ def test_quase_duplicata_do_print_nao_entra():
 
 
 def test_quase_duplicata_nao_afeta_formatos_sem_o_dicionario():
-    """PDF/CSV têm descrição estável: quase_gemeas vem vazio e nada muda."""
+    """Extratos (OFX/CSV de conta) têm descrição estável: quase_gemeas vem
+    vazio e nada muda. Print e FATURAS usam a barreira (13/08/2026)."""
     t = (1, "2026-08-04", 1274233)
     decisoes = importacao.decidir_linhas(
-        [("chave-do-pdf", t)], ja_no_banco={}, quase_gemeas={})
+        [("chave-do-extrato", t)], ja_no_banco={}, quase_gemeas={})
     assert decisoes == [("insere", 1)]
+
+
+def test_barreira_vale_para_print_e_faturas():
+    """A lista de formatos com barreira: print (10/08) + as três faturas
+    (13/08 — CSV parcial × CSV fechado × PDF grafam o mesmo item diferente
+    e criaram 19 duplicatas reais em ago/26)."""
+    assert importacao.FORMATOS_QUASE_DUPLICATA == frozenset([
+        "Print do app (OCR)",
+        "CSV fatura Nubank", "PDF fatura Nubank", "PDF fatura Santander"])
+
+
+def test_estorno_ja_lancado_em_outra_competencia_nao_reentra():
+    """O caso real do estorno Airbnb: ele vive em jul/26 por decisão do
+    usuário (id 1711, grafia da planilha) e a fatura de ago o traz com outra
+    grafia. A barreira olha (conta, dia, valor) SEM olhar competência, então
+    a cópia da fatura não entra."""
+    t = (1, "2026-07-13", 56874)
+    decisoes = importacao.decidir_linhas(
+        [("estorno-grafia-da-fatura", t)],
+        ja_no_banco={}, quase_gemeas={t: 1})
+    assert decisoes == [("quase", 1)]
 
 
 def test_gemea_exata_consome_a_vaga_da_quase_duplicata():
