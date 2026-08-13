@@ -868,6 +868,25 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
                 "range": "%s%d" % ("C" if c == 2 else "D", r + 1),
                 "values": [[nova]]})
 
+    # --- 1b. linhas "Fatura Nubank"/"Fatura Santander" (grupo FATURAS, que
+    # o passo 1 pula de propósito — fatura NÃO filtra Extrato): a fórmula de
+    # C é regravada em toda sincronização, como as demais. Motivo (13/08/2026):
+    # a C da Fatura Nubank apareceu APAGADA depois de um espelhar — célula em
+    # branco, sem fórmula — e nada aqui reescrevia essas linhas; quem some,
+    # ficava sumido. Mesmo padrão de auto-reparo do resto do Painel.
+    FATURAS_PAINEL = (("FATURA NUBANK", "Cartão Nubank"),
+                      ("FATURA SANTANDER", "Cartão Santander"))
+    for rotulo_fatura, conta_fatura in FATURAS_PAINEL:
+        for r in range(len(grade)):
+            if texto_a(r).upper() == rotulo_fatura:
+                celulas_valores.append({
+                    "range": "C%d" % (r + 1),
+                    "values": [[_para_dialeto_pt(
+                        "=SUMIFS('Lançamentos'!$J$4:$J$100000,"
+                        "'Lançamentos'!$H$4:$H$100000,\"%s\","
+                        "'Lançamentos'!$K$4:$K$100000,$F$4)" % conta_fatura)]]})
+                break
+
     # --- 2. faturas de cartão entram no "Total de despesas" (decisão do
     # usuário, 09/08/2026). Os grupos de despesa estão filtrados a Extrato,
     # então somar as faturas por cima NÃO conta nada duas vezes: compra de
