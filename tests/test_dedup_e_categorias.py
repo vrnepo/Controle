@@ -260,3 +260,15 @@ def test_ordem_decide_o_empate():
     ])
     assert categorizacao.classificar("AMAZON BR", -100.0, "cartao",
                                      compiladas)["categoria"] == "Primeira"
+
+
+def test_pix_da_ceg_truncado_vai_para_gas():
+    """O extrato Santander trunca "Companhia Distribuidora de Gás" em
+    "Companhia Distribuidora d" — a regra do gás tem de pegar mesmo assim
+    (decisão do usuário, 13/08/2026)."""
+    r = categorizacao.classificar("PIX ENVIADO Companhia Distribuidora d",
+                                  -68.10, "conta", regras())
+    assert r["categoria"] == "Moradia – APTO"
+    assert r["subcategoria"] == "Gás"
+    assert r["item_fixo"] == "Gás (Naturgy/CEG)"
+    assert r["tipo"] == "Despesa"

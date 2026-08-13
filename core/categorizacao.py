@@ -54,7 +54,10 @@ REGRAS_PADRAO: List[Tuple[str, str, str, str, str]] = [
     (r"ALMEIDA FERNANDES ADVOGAD", "Moradia – APTO", "Aluguel", "Aluguel apartamento", ""),
     (r"VLADIMIR FARIAS NEPOMUCEN", "FLAT", "Condomínio/IPTU", "Condomínio FLAT (pai)", ""),
     (r"\bLIGHT\b|CEB\b|NEOENERGIA|ENEL", "Moradia – APTO", "Energia", "Luz (Light)", ""),
-    (r"NATURG|NIT GAS|\bCEG\b|DISTRIBUIDORA DE GAS|\bGAS\b",
+    # "COMPANHIA DISTRIBUIDORA": o PIX do extrato Santander trunca a razão
+    # social da CEG em "Companhia Distribuidora d" — sem o "e Gás" que o
+    # padrão antigo esperava (confirmado pelo usuário, 13/08/2026).
+    (r"NATURG|NIT GAS|\bCEG\b|DISTRIBUIDORA DE GAS|COMPANHIA DISTRIBUIDORA|\bGAS\b",
      "Moradia – APTO", "Gás", "Gás (Naturgy/CEG)", ""),
     (r"TELEFONICA|VIVO ", "Moradia – APTO", "Telefonia/Internet",
      "Telefone (Vivo/Telefônica)", ""),
