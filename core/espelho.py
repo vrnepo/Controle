@@ -514,6 +514,148 @@ NOTA_PREVISAO = (
     "de novo qualquer fórmula que você tenha digitado na coluna.")
 
 
+# Rótulo da coluna A (maiúsculo, sem bordas) → critério da fórmula padrão da
+# coluna C. Dois dicionários porque o Painel mistura linhas por ITEM FIXO
+# (coluna G dos Lançamentos) e por CATEGORIA (coluna E) — e alguns rótulos
+# de apresentação não são iguais ao valor do banco ("Conta de luz (Light)"
+# × item "Luz (Light)"; "Assinaturas & serviços digitais" × categoria
+# "Assinaturas"). Rótulo que não está aqui e coincide com o item fixo entra
+# pelo fallback G=rótulo (ex.: "Psicóloga", "Academia", "Celular (TIM)").
+PAINEL_ITEM_G = {
+    "ALUGUEL": "Aluguel apartamento",
+    "CONDOMÍNIO": "Condomínio apartamento",
+    "CONTA DE LUZ (LIGHT)": "Luz (Light)",
+    "CONTA DE GÁS (NATURGY/CEG)": "Gás (Naturgy/CEG)",
+}
+PAINEL_CATEGORIA_E = {
+    "ALIMENTAÇÃO": "Alimentação",
+    "TRANSPORTE": "Transporte",
+    "COMPRAS & VESTUÁRIO": "Compras & Vestuário",
+    "ASSINATURAS & SERVIÇOS DIGITAIS": "Assinaturas",
+    "SAÚDE": "Saúde",
+    "LAZER & VIAGEM": "Lazer & Viagem",
+    "ESTUDOS": "Estudos",
+    "CARRO": "Carro",
+    "TARIFAS, JUROS & IMPOSTOS": "Tarifas & Impostos",
+    "PRESENTES": "Presentes",
+    "IMPREVISTOS": "Imprevistos",
+    "OUTROS": "Outros",
+    "REEMBOLSOS & ESTORNOS": "Reembolsos & Estornos",
+    "OUTRAS RECEITAS": "Outras Receitas",
+}
+# Linhas que têm passo próprio de regravação a cada sincronização (0d, 0f)
+# ou que não são dados — o gerador não escreve nelas.
+PAINEL_PULAR = (
+    "SALDO DO MÊS ANTERIOR", "SALDO INICIAL",
+    "MÊS DE REFERÊNCIA", "GRUPO / ITEM",
+    "PAINEL MENSAL", "ESCOLHA MÊS", "PREVISÃO", "RESULTADO DO M",
+)
+
+
+def _sumifs_padrao(criterios: List[Tuple[str, str]]) -> str:
+    """SUMIFS canônico sobre os Lançamentos: soma $J com os critérios dados
+    como (coluna, valor). Valor começando com "$" é referência e começando
+    com aspas é expressão pronta ('"<="&$F$4') — os demais ganham aspas."""
+    partes = ["'Lançamentos'!$J$4:$J$100000"]
+    for coluna, valor in criterios:
+        partes.append("'Lançamentos'!$%s$4:$%s$100000" % (coluna, coluna))
+        cru = valor.startswith("$") or valor.startswith('"')
+        partes.append(valor if cru else '"%s"' % valor)
+    return "=SUMIFS(" + ",".join(partes) + ")"
+
+
+def _formulas_c_do_painel(rotulos: List[str]) -> Dict[int, str]:
+    """
+    A coluna C ("Mês selecionado") do Painel Mensal é DO SISTEMA (pedido do
+    usuário, 13/08/2026, depois de a C da Fatura Nubank amanhecer apagada):
+    dado o rótulo de cada linha, devolve {índice 0-based: fórmula CANÔNICA}
+    de TODA linha reconhecida — o ajustador regrava tudo a cada
+    sincronização, então apagar uma fórmula da C deixou de ser permanente.
+
+    Regras, na ordem: grupo abre no cabeçalho (RECEITAS, FATURAS…,
+    APARTAMENTO, FLAT, PESSOAIS FIXAS, DESPESAS VARIÁVEIS) e fecha no
+    Subtotal, que vira SUM do bloco; TOTAL DE RECEITAS/DESPESAS e RESULTADO
+    referenciam os subtotais; faturas somam por conta (H, SEM filtro
+    Extrato — fatura é fatura); linhas por categoria (E) e por item fixo
+    (G) levam competência $F$4 + Fonte "Extrato" (o gasto de cartão já está
+    dentro da linha da fatura); "Outras receitas" filtra Tipo="Receita",
+    como no desenho original da planilha.
+    """
+    GRUPOS = ("RECEITAS", "FATURAS", "APARTAMENTO", "FLAT",
+              "PESSOAIS FIXAS", "DESPESAS VARI")
+    saida: Dict[int, str] = {}
+    subtotais: List[Tuple[str, int]] = []
+    totais: Dict[str, int] = {}
+    inicio_grupo: Optional[int] = None
+
+    for r, bruto in enumerate(rotulos):
+        rotulo = (bruto or "").strip()
+        alto = rotulo.upper()
+        if not alto:
+            continue
+        if alto.startswith("TOTAL DE RECEITAS"):
+            totais["RECEITAS"] = r
+            continue
+        if alto.startswith("TOTAL DE DESPESAS"):
+            totais["DESPESAS"] = r
+            continue
+        if alto.startswith("RESULTADO (SOBRA"):
+            totais["RESULTADO"] = r
+            continue
+        if any(alto.startswith(g) for g in GRUPOS):
+            inicio_grupo = r + 1
+            continue
+        if alto.startswith("SUBTOTAL"):
+            if inicio_grupo is not None and r > inicio_grupo:
+                saida[r] = "=SUM($C$%d:$C$%d)" % (inicio_grupo + 1, r)
+            subtotais.append((alto, r))
+            inicio_grupo = None
+            continue
+        if "— PAGAMENTO" in alto or any(alto.startswith(p) for p in PAINEL_PULAR):
+            continue
+        if alto.startswith("SALDO EM CONTA CORRENTE"):
+            # mesma fórmula da criação da linha-memo (passo 0b): saldo
+            # acumulado da Conta Santander até o mês, sem os transportes.
+            saida[r] = _sumifs_padrao([("H", "Conta Santander"),
+                                       ("K", '"<="&$F$4'), ("I", '"<>Saldo"')])
+        elif alto.startswith("TRANSFERÊNCIAS RECEBIDAS"):
+            # mesma fórmula da criação da linha (passo 0c): só entradas.
+            saida[r] = _sumifs_padrao([("I", "Transferência"), ("B", "Extrato"),
+                                       ("K", "$F$4"), ("J", '">0"')])
+        elif alto == "FATURA NUBANK":
+            saida[r] = _sumifs_padrao([("H", "Cartão Nubank"), ("K", "$F$4")])
+        elif alto == "FATURA SANTANDER":
+            saida[r] = _sumifs_padrao([("H", "Cartão Santander"), ("K", "$F$4")])
+        elif alto in PAINEL_CATEGORIA_E:
+            criterios = [("E", PAINEL_CATEGORIA_E[alto])]
+            if alto == "OUTRAS RECEITAS":
+                criterios.append(("I", "Receita"))
+            criterios += [("K", "$F$4"), ("B", "Extrato")]
+            saida[r] = _sumifs_padrao(criterios)
+        elif alto in PAINEL_ITEM_G:
+            saida[r] = _sumifs_padrao([("G", PAINEL_ITEM_G[alto]),
+                                       ("K", "$F$4"), ("B", "Extrato")])
+        elif inicio_grupo is not None:
+            saida[r] = _sumifs_padrao([("G", rotulo),
+                                       ("K", "$F$4"), ("B", "Extrato")])
+
+    def sub(chave: str) -> Optional[int]:
+        return next((linha for alto, linha in subtotais if chave in alto), None)
+
+    r_rec = sub("RECEITAS")
+    if "RECEITAS" in totais and r_rec is not None:
+        saida[totais["RECEITAS"]] = "=$C$%d" % (r_rec + 1)
+    refs = [sub(k) for k in ("APARTAMENTO", "FLAT", "PESSOAIS", "VARI", "FATURAS")]
+    refs = [x for x in refs if x is not None]
+    if "DESPESAS" in totais and refs:
+        saida[totais["DESPESAS"]] = "=" + "+".join(
+            "$C$%d" % (x + 1) for x in refs)
+    if all(k in totais for k in ("RESULTADO", "RECEITAS", "DESPESAS")):
+        saida[totais["RESULTADO"]] = "=$C$%d+$C$%d" % (
+            totais["RECEITAS"] + 1, totais["DESPESAS"] + 1)
+    return saida
+
+
 def _coluna_previsao(planilha, painel) -> bool:
     """
     Portão de layout do Painel Mensal + congelamento único da Previsão.
@@ -859,48 +1001,41 @@ def _ajustar_painel_mensal(planilha, painel) -> None:
             continue
         if not dentro:
             continue
-        for c in (2, 3):                                # C (mês) e D (média)
-            f = formula(r, c)
-            if not f or "SUMIFS(" not in f:
-                continue
-            nova = _para_dialeto_pt(_sumifs_com_extrato(f))
-            celulas_valores.append({
-                "range": "%s%d" % ("C" if c == 2 else "D", r + 1),
-                "values": [[nova]]})
+        # Só a D (média): a C inteira é regravada pelo gerador do passo 1b,
+        # que não depende da fórmula existente (13/08/2026).
+        f = formula(r, 3)
+        if not f or "SUMIFS(" not in f:
+            continue
+        celulas_valores.append({
+            "range": "D%d" % (r + 1),
+            "values": [[_para_dialeto_pt(_sumifs_com_extrato(f))]]})
 
-    # --- 1b. linhas "Fatura Nubank"/"Fatura Santander" (grupo FATURAS, que
-    # o passo 1 pula de propósito — fatura NÃO filtra Extrato): a fórmula de
-    # C é regravada em toda sincronização, como as demais. Motivo (13/08/2026):
-    # a C da Fatura Nubank apareceu APAGADA depois de um espelhar — célula em
-    # branco, sem fórmula — e nada aqui reescrevia essas linhas; quem some,
-    # ficava sumido. Mesmo padrão de auto-reparo do resto do Painel.
-    FATURAS_PAINEL = (("FATURA NUBANK", "Cartão Nubank"),
-                      ("FATURA SANTANDER", "Cartão Santander"))
-    for rotulo_fatura, conta_fatura in FATURAS_PAINEL:
-        for r in range(len(grade)):
-            if texto_a(r).upper() == rotulo_fatura:
-                celulas_valores.append({
-                    "range": "C%d" % (r + 1),
-                    "values": [[_para_dialeto_pt(
-                        "=SUMIFS('Lançamentos'!$J$4:$J$100000,"
-                        "'Lançamentos'!$H$4:$H$100000,\"%s\","
-                        "'Lançamentos'!$K$4:$K$100000,$F$4)" % conta_fatura)]]})
-                break
+    # --- 1b. a coluna C INTEIRA é do sistema (pedido do usuário, 13/08/2026,
+    # depois de a C da Fatura Nubank amanhecer apagada): as fórmulas padrão
+    # de TODAS as linhas reconhecidas são regravadas a cada sincronização a
+    # partir do rótulo da coluna A — apagar uma célula da C deixou de ser
+    # permanente. Saldos, transferências e pagamentos têm passos próprios
+    # (0b/0c/0d/0f) e ficam fora do gerador.
+    rotulos = [texto_a(r) for r in range(len(grade))]
+    for r, formula_c in sorted(_formulas_c_do_painel(rotulos).items()):
+        celulas_valores.append({
+            "range": "C%d" % (r + 1),
+            "values": [[_para_dialeto_pt(formula_c)]]})
 
     # --- 2. faturas de cartão entram no "Total de despesas" (decisão do
     # usuário, 09/08/2026). Os grupos de despesa estão filtrados a Extrato,
     # então somar as faturas por cima NÃO conta nada duas vezes: compra de
     # cartão só existe dentro da fatura.
+    # Só a D: a C do total já sai do gerador do passo 1b com as faturas dentro.
     r_total = achar("TOTAL DE DESPESAS")
     r_faturas = achar("SUBTOTAL — FATURAS")
     if r_total is not None and r_faturas is not None:
-        for c, letra in ((2, "C"), (3, "D")):
-            f = formula(r_total, c)
-            ref = "$%s$%d" % (letra, r_faturas + 1)
-            if f and ref not in f:
-                celulas_valores.append({
-                    "range": "%s%d" % (letra, r_total + 1),
-                    "values": [[_para_dialeto_pt(f) + "+" + ref]]})
+        f = formula(r_total, 3)
+        ref = "$D$%d" % (r_faturas + 1)
+        if f and ref not in f:
+            celulas_valores.append({
+                "range": "D%d" % (r_total + 1),
+                "values": [[_para_dialeto_pt(f) + "+" + ref]]})
 
     if celulas_valores:
         painel.batch_update(celulas_valores, value_input_option="USER_ENTERED")
