@@ -152,3 +152,53 @@ def test_print_emenda_contraparte_partida_pelo_ocr():
     assert len(r.linhas) == 1
     assert r.linhas[0]["descricao"] == (
         "Liquido de vencimento Municipio 04249873300014")
+
+
+# O print real de 13/08/2026: o bloco mais recente vem como "Hoje", sem data.
+TEXTO_PRINT_HOJE = """
+02:10
+R$ 4.774,62
+Filtrar
+Hoje
+Pix enviado
+Roseane maria do nascimen -R$ 190,00
+Segunda, 10 de agosto
+Remuneracao aplicacao automatica
+R$ 0,08
+Pix enviado
+Lucia helena moreira de s -R$ 190,00
+"""
+
+
+def test_bloco_hoje_usa_a_data_da_importacao():
+    """"Hoje" = o dia em que a importação roda (pedido do usuário,
+    13/08/2026 — antes, o bloco inteiro era descartado por não ter data)."""
+    r = parsers.extrato_de_print("IMG.png", TEXTO_PRINT_HOJE,
+                                 hoje=dt.date(2026, 8, 13))
+    por_valor = {(l["data"], round(l["valor"], 2)) for l in r.linhas}
+    assert (dt.date(2026, 8, 13), -190.00) in por_valor      # bloco Hoje
+    assert (dt.date(2026, 8, 10), -190.00) in por_valor      # bloco com data
+    assert (dt.date(2026, 8, 10), 0.08) in por_valor
+    assert len(r.linhas) == 3
+
+
+def test_bloco_ontem_usa_a_data_da_importacao_menos_um_dia():
+    texto = TEXTO_PRINT_HOJE.replace("Hoje", "Ontem")
+    r = parsers.extrato_de_print("IMG.png", texto, hoje=dt.date(2026, 8, 13))
+    assert (dt.date(2026, 8, 12) ==
+            next(l["data"] for l in r.linhas if l["valor"] == -190.00
+                 and "Roseane" in l["descricao"]))
+
+
+def test_hoje_no_meio_de_descricao_nao_vira_bloco_de_data():
+    """Só a linha que É a palavra "Hoje"/"Ontem" abre bloco — a palavra
+    dentro de uma descrição não pode mudar a data das linhas seguintes."""
+    texto = TEXTO_PRINT_HOJE.replace("Pix enviado\nRoseane",
+                                     "Pix agendado para hoje\nRoseane")
+    r = parsers.extrato_de_print("IMG.png", texto, hoje=dt.date(2026, 8, 13))
+    # sem bloco "Hoje" válido... a linha "Hoje" isolada continua existindo
+    # e o primeiro pagamento segue nela; o teste garante que a descrição com
+    # "hoje" não recomeçou o bloco (a data segue a do cabeçalho anterior).
+    linha = next(l for l in r.linhas if "Roseane" in l["descricao"])
+    assert linha["data"] == dt.date(2026, 8, 13)
+    assert "agendado" in linha["descricao"]

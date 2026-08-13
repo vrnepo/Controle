@@ -21,6 +21,7 @@ import csv
 import datetime as dt
 import io
 import re
+import zoneinfo
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core import config
@@ -743,6 +744,13 @@ MESES_LONGOS = {"JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4, "MAIO": 5,
 _DATA_PRINT = re.compile(
     r"(?:SEGUNDA|TERCA|QUARTA|QUINTA|SEXTA|SABADO|DOMINGO)\s*[-,]?\s*"
     r"(\d{1,2})\s+DE\s+([A-Z]+)")
+
+# O app usa "Hoje"/"Ontem" nos dois blocos mais recentes, sem data numérica
+# (pedido do usuário, 13/08/2026: o bloco "Hoje" era descartado). "Hoje" é o
+# dia EM QUE A IMPORTAÇÃO RODA — no fuso do usuário, não no do servidor: o
+# Render vive em UTC, e das 21h à meia-noite de Brasília a data UTC já é
+# amanhã, o que registraria o lançamento um dia à frente.
+FUSO_USUARIO = zoneinfo.ZoneInfo("America/Sao_Paulo")
 _VALOR_PRINT = re.compile(r"([−–—-])?\s*R\$\s*([\d.]+,\d{2})")
 _RUIDO_PRINT = (
     "SALDO DISPONIVEL", "SALDO + LIMITE", "ENTENDA SEU LIMITE",
@@ -750,7 +758,8 @@ _RUIDO_PRINT = (
 )
 
 
-def extrato_de_print(nome: str, texto: str) -> Leitura:
+def extrato_de_print(nome: str, texto: str,
+                     hoje: Optional[dt.date] = None) -> Leitura:
     """
     Extrato PARCIAL a partir do texto reconhecido num print do app Santander
     (decisão do usuário, 09/08/2026).
@@ -769,7 +778,8 @@ def extrato_de_print(nome: str, texto: str) -> Leitura:
     Vitor Alencar Farias Nepo"), então a deduplicação reconhece os repetidos.
     """
     r = Leitura(FORMATO_PRINT, "Conta Santander")
-    hoje = dt.date.today()
+    if hoje is None:
+        hoje = dt.datetime.now(FUSO_USUARIO).date()
     data_atual: Optional[dt.date] = None
     titulo_pendente = ""
     saldo_do_print: Optional[float] = None
@@ -779,6 +789,14 @@ def extrato_de_print(nome: str, texto: str) -> Leitura:
         if not s:
             continue
         n = normalizar(s)
+
+        # Cabeçalho "Hoje"/"Ontem": a linha é SÓ a palavra (o ícone de
+        # calendário não vira texto no OCR). Igualdade estrita de propósito —
+        # "hoje" no meio de uma descrição não pode virar bloco de data.
+        if n in ("HOJE", "ONTEM"):
+            data_atual = hoje if n == "HOJE" else hoje - dt.timedelta(days=1)
+            titulo_pendente = ""
+            continue
 
         m = _DATA_PRINT.search(n)
         if m and MESES_LONGOS.get(m.group(2)):
