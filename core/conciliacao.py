@@ -20,6 +20,10 @@ A coluna `situacao` separa o que é diferença esperada do que é erro:
 
     ok                      gasto e resumo batem, e o total calculado bate com o app
     importacao_incompleta   falta lançamento — `delta_importacao` diz quanto
+    justificada             o Δ existe, mas o usuário o examinou e registrou o
+                            motivo (tabela `justificativas`); se o Δ mudar de
+                            valor, o alarme VOLTA — a exceção é do valor aceito,
+                            não do mês inteiro
     conferir_resumo         os lançamentos fecham, mas o resumo digitado não
     sem_resumo              falta preencher o resumo oficial daquele mês
     sem_lancamentos         nada importado nesse mês
@@ -46,6 +50,10 @@ def linhas(competencia: Optional[dt.date] = None) -> List[Dict[str, Any]]:
     resumos = {}
     for r in repositorio.resumos():
         resumos[(r["conta"], r["competencia"])] = r
+
+    justificativas = {}
+    for j in repositorio.justificativas():
+        justificativas[(j["conta"], j["competencia"])] = j
 
     chaves = set(gastos) | set(resumos)
     if competencia:
@@ -97,12 +105,30 @@ def linhas(competencia: Optional[dt.date] = None) -> List[Dict[str, Any]]:
             linha["delta_app"] = round(calculado - informado, 2) if informado else None
 
             if abs(linha["delta_importacao"]) > TOLERANCIA:
+                # "Faltam" quando os lançamentos somam MENOS que o resumo;
+                # "Sobram" no sentido oposto (ex.: estorno realocado para cá).
+                verbo = "Faltam" if linha["delta_importacao"] < 0 else "Sobram"
                 linha["situacao"] = "importacao_incompleta"
                 linha["explicacao"] = (
-                    "Faltam %s em lançamentos: pelo resumo da fatura a soma deveria "
+                    "%s %s em lançamentos: pelo resumo da fatura a soma deveria "
                     "ser %s, e os lançamentos somam %s."
-                    % (_moeda(abs(linha["delta_importacao"])), _moeda(esperado),
-                       _moeda(gasto)))
+                    % (verbo, _moeda(abs(linha["delta_importacao"])),
+                       _moeda(esperado), _moeda(gasto)))
+
+                j = justificativas.get((conta, comp))
+                if j is not None:
+                    if abs(linha["delta_importacao"] - float(j["delta"])) <= TOLERANCIA:
+                        linha["situacao"] = "justificada"
+                        linha["explicacao"] = (
+                            "Diferença de %s examinada e aceita: %s"
+                            % (_moeda(abs(linha["delta_importacao"])), j["motivo"]))
+                    else:
+                        # O mês divergiu por OUTRO valor: a exceção registrada não
+                        # cobre — alarme de volta, dizendo o que mudou.
+                        linha["explicacao"] += (
+                            " Havia justificativa registrada para Δ de %s, mas o Δ "
+                            "atual é outro — reveja o mês."
+                            % _moeda(float(j["delta"])))
             elif linha["delta_app"] is not None and abs(linha["delta_app"]) > TOLERANCIA:
                 linha["situacao"] = "conferir_resumo"
                 linha["explicacao"] = (

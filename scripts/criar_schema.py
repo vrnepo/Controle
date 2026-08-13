@@ -113,6 +113,21 @@ DDL = [
         observacao    text
     )
     """,
+    # Exceções deliberadas da conciliação (13/08/2026): o caso de origem é o
+    # estorno Airbnb que consta na fatura de ago/26 mas fica em jul/26 por
+    # decisão do usuário. Guarda o Δ aceito para o alarme VOLTAR se o mês
+    # mudar de novo por outro motivo.
+    """
+    CREATE TABLE IF NOT EXISTS justificativas (
+        id           serial PRIMARY KEY,
+        conta_id     integer NOT NULL REFERENCES contas(id),
+        competencia  date NOT NULL,
+        delta        numeric(14, 2) NOT NULL,
+        motivo       text NOT NULL,
+        criado_em    timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT justificativa_unica UNIQUE (conta_id, competencia)
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS importacoes (
         id           bigserial PRIMARY KEY,

@@ -313,6 +313,7 @@ async function desenharLancamentos() {
 const SITUACOES = {
   ok: { selo: "selo-ok", texto: "confere" },
   importacao_incompleta: { selo: "selo-erro", texto: "importação incompleta" },
+  justificada: { selo: "selo-neutro", texto: "justificada" },
   conferir_resumo: { selo: "selo-alerta", texto: "conferir resumo" },
   sem_resumo: { selo: "selo-neutro", texto: "sem resumo" },
   sem_lancamentos: { selo: "selo-neutro", texto: "sem lançamentos" },
@@ -351,7 +352,9 @@ async function desenharConciliacao() {
       <strong>valor a pagar</strong>, que inclui o saldo que não foi pago e desconta
       os pagamentos. Os dois só coincidem quando a fatura anterior foi paga
       integralmente. A coluna <em>Δ importação</em> é a que acusa erro de verdade:
-      diferente de zero significa lançamento faltando.
+      diferente de zero significa lançamento faltando. Uma diferença examinada e
+      explicada (ex.: estorno mantido em outro mês) pode ser registrada como
+      <strong>justificada</strong> — sai do alarme, mas volta se o valor mudar.
     </div></div>
 
     <div class="grade grade-2" style="margin-bottom:16px">${graficos}</div>
@@ -366,24 +369,65 @@ async function desenharConciliacao() {
           <th class="num">Total calculado</th><th class="num">Total no app</th>
           <th>Situação</th>
         </tr></thead><tbody>
-        ${linhas.map((l) => {
+        ${linhas.map((l, i) => {
           const s = SITUACOES[l.situacao] || SITUACOES.sem_resumo;
           const delta = l.delta_importacao;
+          const acao = l.situacao === "importacao_incompleta"
+            ? `<button class="botao botao-p" type="button" data-justificar="${i}"
+                 style="margin-left:6px">Justificar</button>`
+            : l.situacao === "justificada"
+              ? `<button class="botao botao-p botao-fantasma" type="button"
+                   data-desjustificar="${i}" style="margin-left:6px">Remover</button>`
+              : "";
           return `<tr>
             <td style="white-space:nowrap">${mesCurto(l.competencia)}</td>
             <td>${G.esc(l.conta)}</td>
             <td class="num">${moeda(l.gasto_do_mes)}</td>
             <td class="num">${l.despesas_encargos == null ? "—" : moeda(l.despesas_encargos)}</td>
-            <td class="num ${delta && Math.abs(delta) > 0.05 ? "negativo" : ""}">
+            <td class="num ${delta && Math.abs(delta) > 0.05 && l.situacao !== "justificada" ? "negativo" : ""}">
               ${delta == null ? "—" : moeda(delta)}</td>
             <td class="num">${l.saldo_anterior == null ? "—" : moeda(l.saldo_anterior)}</td>
             <td class="num">${l.pagamentos == null ? "—" : moeda(l.pagamentos)}</td>
             <td class="num">${l.total_calculado == null ? "—" : moeda(l.total_calculado)}</td>
             <td class="num">${l.total_informado ? moeda(l.total_informado) : "—"}</td>
-            <td><span class="selo ${s.selo}" title="${G.esc(l.explicacao)}">${s.texto}</span></td>
+            <td style="white-space:nowrap"><span class="selo ${s.selo}"
+              title="${G.esc(l.explicacao)}">${s.texto}</span>${acao}</td>
           </tr>`;
         }).join("")}
         </tbody></table></div></div></div>`;
+
+  /* Justificar exige o motivo — é ele que aparece na Situação e no espelho.
+     O valor aceito quem grava é o servidor, lendo o Δ atual do banco. */
+  document.querySelectorAll("[data-justificar]").forEach((b) => {
+    b.addEventListener("click", async () => {
+      const l = linhas[Number(b.dataset.justificar)];
+      const motivo = window.prompt(
+        "Motivo da justificativa (fica registrado na conciliação e no espelho):");
+      if (!motivo || !motivo.trim()) return;
+      try {
+        await api("/api/conciliacao/justificar", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conta: l.conta, competencia: l.competencia,
+                                 motivo: motivo.trim() }),
+        });
+        avisar("Diferença registrada como justificada.", "ok");
+        desenharConciliacao();
+      } catch (erro) { avisar(erro.message, "erro"); }
+    });
+  });
+  document.querySelectorAll("[data-desjustificar]").forEach((b) => {
+    b.addEventListener("click", async () => {
+      const l = linhas[Number(b.dataset.desjustificar)];
+      if (!window.confirm("Remover a justificativa? O alarme desse mês volta.")) return;
+      try {
+        await api("/api/conciliacao/justificar?conta=" + encodeURIComponent(l.conta) +
+                  "&competencia=" + encodeURIComponent(l.competencia),
+                  { method: "DELETE" });
+        avisar("Justificativa removida.", "ok");
+        desenharConciliacao();
+      } catch (erro) { avisar(erro.message, "erro"); }
+    });
+  });
 }
 
 /* ------------------------------------------------------------- importar */

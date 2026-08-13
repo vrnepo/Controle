@@ -18,6 +18,7 @@ from core import bd
 # Tabela nova só entra aqui de propósito, junto do schema.
 TABELAS_GRAVAVEIS = {
     "contas", "usuarios", "lancamentos", "resumo_faturas", "regras", "importacoes",
+    "justificativas",
 }
 
 
@@ -296,6 +297,43 @@ def resumos(competencia: Optional[dt.date] = None) -> List[Dict[str, Any]]:
     sql.append(" ORDER BY r.competencia, c.nome")
     with bd.obter_conexao() as c:
         return _linhas(c.execute(text("\n".join(sql)), p))
+
+
+# ---------------------------------------------------------- justificativas
+
+def justificativas() -> List[Dict[str, Any]]:
+    """Exceções deliberadas da conciliação — diferenças que o usuário examinou
+    e aceitou (ex.: estorno mantido em outra competência). O Δ gravado é o
+    aceito: se o mês divergir por OUTRO valor, o alarme volta."""
+    _checar("justificativas")
+    with bd.obter_conexao() as c:
+        return _linhas(c.execute(text(
+            "SELECT j.id, ct.nome AS conta, j.conta_id, j.competencia,"
+            " j.delta, j.motivo, j.criado_em"
+            " FROM justificativas j JOIN contas ct ON ct.id = j.conta_id"
+            " ORDER BY j.competencia, ct.nome")))
+
+
+def salvar_justificativa(conta_id: int, competencia: dt.date, delta: float,
+                         motivo: str) -> None:
+    _checar("justificativas")
+    with bd.obter_conexao() as c:
+        c.execute(text(
+            "INSERT INTO justificativas (conta_id, competencia, delta, motivo)"
+            " VALUES (:c, :m, :d, :t)"
+            " ON CONFLICT ON CONSTRAINT justificativa_unica"
+            " DO UPDATE SET delta = :d, motivo = :t"),
+            {"c": conta_id, "m": competencia, "d": delta, "t": motivo})
+        c.commit()
+
+
+def apagar_justificativa(conta_id: int, competencia: dt.date) -> None:
+    _checar("justificativas")
+    with bd.obter_conexao() as c:
+        c.execute(text(
+            "DELETE FROM justificativas WHERE conta_id = :c AND competencia = :m"),
+            {"c": conta_id, "m": competencia})
+        c.commit()
 
 
 # ------------------------------------------------------------- importações

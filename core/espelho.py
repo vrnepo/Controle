@@ -943,6 +943,7 @@ NOTAS_COLUNAS_LANCAMENTOS = {
 SITUACAO_ROTULO = {
     "ok": "✔ confere",
     "importacao_incompleta": "⚠ importação incompleta",
+    "justificada": "◦ justificada",
     "conferir_resumo": "⚠ conferir resumo",
     "sem_resumo": "sem resumo",
     "sem_lancamentos": "sem lançamentos",

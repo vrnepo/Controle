@@ -306,6 +306,48 @@ def api_conciliacao(competencia: Optional[str] = None,
     return json_ok(conciliacao.linhas(_competencia(competencia)))
 
 
+@app.post("/api/conciliacao/justificar")
+async def api_justificar(request: Request, email: str = Depends(exigir_login)):
+    """Registra o Δ importação ATUAL do mês como examinado e aceito. O valor
+    é lido aqui do banco, nunca do navegador: o que se aceita é o que o
+    sistema está medindo agora."""
+    dados = await request.json()
+    if not isinstance(dados, dict):
+        raise HTTPException(status_code=400, detail="Corpo inválido.")
+    comp = _competencia(dados.get("competencia"))
+    motivo = str(dados.get("motivo") or "").strip()
+    conta_nome = str(dados.get("conta") or "").strip()
+    if not comp or not motivo or not conta_nome:
+        raise HTTPException(status_code=400,
+                            detail="Informe conta, competência e motivo.")
+
+    conta = next((c for c in repositorio.contas() if c["nome"] == conta_nome), None)
+    if not conta:
+        raise HTTPException(status_code=404, detail="Conta desconhecida.")
+    linha = next((l for l in conciliacao.linhas(comp) if l["conta"] == conta_nome),
+                 None)
+    if not linha or linha["delta_importacao"] is None:
+        raise HTTPException(status_code=400,
+                            detail="Esse mês não tem Δ importação para justificar.")
+    if abs(linha["delta_importacao"]) <= conciliacao.TOLERANCIA:
+        raise HTTPException(status_code=400,
+                            detail="O Δ desse mês já está dentro da tolerância.")
+    repositorio.salvar_justificativa(conta["id"], comp,
+                                     linha["delta_importacao"], motivo)
+    return json_ok({"ok": True, "delta": linha["delta_importacao"]})
+
+
+@app.delete("/api/conciliacao/justificar")
+def api_remover_justificativa(conta: str, competencia: str,
+                              email: str = Depends(exigir_login)):
+    comp = _competencia(competencia)
+    c = next((x for x in repositorio.contas() if x["nome"] == conta.strip()), None)
+    if not comp or not c:
+        raise HTTPException(status_code=400, detail="Conta ou competência inválida.")
+    repositorio.apagar_justificativa(c["id"], comp)
+    return json_ok({"ok": True})
+
+
 @app.post("/api/resumo")
 def api_resumo(conta_id: int = Form(...), competencia: str = Form(...),
                saldo_anterior: float = Form(0), despesas: float = Form(0),
